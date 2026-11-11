@@ -1,0 +1,54 @@
+{
+  "name": "16kb-check",
+  "version": "0.1.0",
+  "description": "Check an Android project for Google Play 16KB page-size compatibility.",
+  "keywords": [
+    "android",
+    "16kb",
+    "google-play",
+    "gradle",
+    "cli"
+  ],
+  "homepage": "https://16kb.dev",
+  "bugs": {
+    "url": "https://github.com/priscila225/16kb-check/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/priscila225/16kb-check.git"
+  },
+  "license": "MIT",
+  "author": "Priscila Apocalypse",
+  "bin": {
+    "16kb-check": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "npm run build && tsx --test tests/*.test.ts",
+    "16kb-check": "node dist/cli.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}
