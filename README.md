@@ -15,14 +15,14 @@ SDK                                         Version             Status      Min 
 ──────────────────────────────────────────  ──────────────────  ──────────  ────────────────  ────────────────────────────────────────────────
 io.sentry:sentry-android                    7.14.0              not ready   7.18.0            https://16kb.dev/sdk/sentry-android             
 com.mapbox.maps:android                     11.7.0              partial     11.7.0 (-ndk27 …  https://16kb.dev/sdk/mapbox-maps-android        
-com.android.application                     8.7.3               ready       —                                                                 
-com.android.library                         —                   ready       —                                                                 
 org.jetbrains.kotlin.android                2.0.21              ready       —                                                                 
-androidx.annotation:annotation              1.8.0               ready       —                                                                 
-androidx.core:core-ktx                      1.15.0              ready       —                                                                 
-com.squareup.okhttp3:okhttp                 4.12.0              ready       —                                                                 
-com.squareup.okio:okio                      3.9.0               ready       —                                                                 
+androidx.annotation:annotation              1.8.0               ready       any (no native …  https://16kb.dev/sdk/androidx-other-java        
+androidx.core:core-ktx                      1.15.0              ready       any (no native …  https://16kb.dev/sdk/androidx-core-ui           
+com.android.application                     8.7.3               ready       any (build tool…  https://16kb.dev/sdk/android-gradle-plugin      
+com.android.library                         —                   ready       any (build tool…  https://16kb.dev/sdk/android-gradle-plugin      
 com.google.firebase:firebase-analytics      BOM com.google.fi…  ready       any (no native …  https://16kb.dev/sdk/firebase-android           
+com.squareup.okhttp3:okhttp                 4.12.0              ready       any (no native …  https://16kb.dev/sdk/okhttp                     
+com.squareup.okio:okio                      3.9.0               ready       any (no native …  https://16kb.dev/sdk/okhttp                     
 
 10 public libraries: 8 ready, 1 not ready, 1 partial, 0 checking, 0 unknown.
 2 private or internal libraries were skipped on this machine and never sent.
@@ -34,7 +34,7 @@ Note: BOM / platform versions are recorded but not expanded to a concrete module
 Google Play blocks updates targeting API 35+ without 16KB support from Feb 1, 2027.
 ```
 
-Numbers and names above are from the sample project in `tests/fixtures/android-app`. Your output will follow the same shape.
+This is the real output of `npx 16kb-check --path tests/fixtures/android-app --no-color` against the live 16kb.dev catalog. Your project will follow the same shape.
 
 ## Usage
 
