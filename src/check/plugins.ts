@@ -191,8 +191,9 @@ export function agpPluginFromLibrary(dep: DeclaredDep): DeclaredDep {
 export function parseBuildscriptAgp(text: string, file: string, catalog?: VersionCatalog): DeclaredDep | null {
   const cleaned = stripLineComments(stripBlockComments(text));
   const vars = collectVariables(cleaned);
-  const str = /\bclasspath\s*\(?\s*["']com\.android\.tools\.build:gradle:([^"']+)["']/.exec(cleaned);
-  if (str) {
+  // A buildscript block often has several classpath lines (Kotlin, AGP, Google services...).
+  // Look at every one of them, not just the first.
+  for (const str of cleaned.matchAll(/\bclasspath\s*\(?\s*["']com\.android\.tools\.build:gradle:([^"']+)["']/g)) {
     const sub = substituteVars(str[1], vars);
     const version = /\$/.test(sub.value) ? "" : sub.value.trim();
     return agpPluginFromLibrary({
@@ -204,19 +205,20 @@ export function parseBuildscriptAgp(text: string, file: string, catalog?: Versio
       sourceFile: file,
     });
   }
-  const cat = /\bclasspath\s*\(?\s*libs\.([A-Za-z][\w.]*)/.exec(cleaned);
-  if (cat && catalog) {
-    const resolved = resolveCatalogLibrary(catalog, cat[1].replace(/\.get\(\)$/, "").replace(/\.+$/, ""));
-    if (resolved && isAgpLibraryCoordinate(resolved.group, resolved.artifact)) {
-      return {
-        group: "com.android.tools.build",
-        artifact: "gradle",
-        version: resolved.version,
-        versionSource: resolved.version ? "catalog" : "missing",
-        configuration: "plugin",
-        catalogAlias: resolved.alias,
-        sourceFile: file,
-      };
+  if (catalog) {
+    for (const cat of cleaned.matchAll(/\bclasspath\s*\(?\s*libs\.([A-Za-z][\w.]*)/g)) {
+      const resolved = resolveCatalogLibrary(catalog, cat[1].replace(/\.get\(\)$/, "").replace(/\.get$/, "").replace(/\.+$/, ""));
+      if (resolved && isAgpLibraryCoordinate(resolved.group, resolved.artifact)) {
+        return {
+          group: "com.android.tools.build",
+          artifact: "gradle",
+          version: resolved.version,
+          versionSource: resolved.version ? "catalog" : "missing",
+          configuration: "plugin",
+          catalogAlias: resolved.alias,
+          sourceFile: file,
+        };
+      }
     }
   }
   return null;

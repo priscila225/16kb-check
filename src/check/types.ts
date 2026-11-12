@@ -29,6 +29,8 @@ export type ParseResult = {
   plugins: DeclaredDep[];
   /** Test-only dependencies, kept out of readiness counts. */
   testDependencies: DeclaredDep[];
+  /** Build logic (buildSrc, build-logic, convention plugins, lint checks) and Gradle plugin artifacts. */
+  buildToolingDependencies: DeclaredDep[];
   boms: { group: string; artifact: string; version: string; sourceFile: string }[];
   files: { name: string; kind: "toml" | "gradle" | "unknown"; depCount: number }[];
   issues: ParseIssue[];

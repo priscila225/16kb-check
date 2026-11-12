@@ -244,6 +244,15 @@ export function parseVersionCatalog(text: string): VersionCatalog {
   }
   flushSub();
 
+  // Resolve version.ref against this file's own [versions] now, so that merging several
+  // catalogs later can never make one catalog's alias pick up another catalog's version.
+  for (const lib of Object.values(libraries)) {
+    if (!lib.version && lib.versionRef && versions[lib.versionRef]) lib.version = versions[lib.versionRef];
+  }
+  for (const plugin of Object.values(plugins)) {
+    if (!plugin.version && plugin.versionRef && versions[plugin.versionRef]) plugin.version = versions[plugin.versionRef];
+  }
+
   return { versions, libraries, plugins, bundles };
 }
 

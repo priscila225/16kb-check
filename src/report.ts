@@ -28,6 +28,8 @@ export type ReportExtras = {
   hiddenPlugins?: number;
   /** Test-only dependencies left out of the readiness counts. */
   testOnlyIgnored?: number;
+  /** Build-logic and Gradle plugin artifacts left out of the readiness counts. */
+  buildToolingIgnored?: number;
   agp?: AgpCheck;
   checkedAt?: string;
 };
@@ -43,6 +45,7 @@ export type CliJson = {
     unknown: number;
     skippedPrivate: number;
     testOnlyIgnored: number;
+    buildToolingIgnored: number;
     blocking: number;
   };
   /** True while 16kb.dev is still checking at least one library. Re-run later for final counts. */
@@ -174,6 +177,7 @@ export function toJson(report: CheckReport, skippedPrivate: number, extras: Repo
       unknown: counts.unknown,
       skippedPrivate,
       testOnlyIgnored: extras.testOnlyIgnored || 0,
+      buildToolingIgnored: extras.buildToolingIgnored || 0,
       blocking: counts["not ready"] + counts.partial,
     },
     settling: counts.checking > 0,
@@ -270,6 +274,10 @@ export function formatTable(report: CheckReport, skippedPrivate: number, color: 
   if (extras.testOnlyIgnored) {
     const n = extras.testOnlyIgnored;
     lines.push(`${n} test-only ${n === 1 ? "dependency was" : "dependencies were"} ignored (test, androidTest, testFixtures and test frameworks).`);
+  }
+  if (extras.buildToolingIgnored) {
+    const n = extras.buildToolingIgnored;
+    lines.push(`${n} build-time ${n === 1 ? "dependency was" : "dependencies were"} ignored (annotation processors, buildSrc, build-logic, convention plugins, lint checks, Gradle plugin artifacts).`);
   }
   lines.push(report.verdictLine);
   if (counts.checking) {

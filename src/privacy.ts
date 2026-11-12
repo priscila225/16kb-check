@@ -12,12 +12,12 @@ export type PrivacySplit = {
  * Drop anything that is not a verifiably public Maven coordinate.
  * Private and internal names never leave this process except as a count in the summary.
  */
-export function splitPublicDeps(deps: DeclaredDep[]): PrivacySplit {
+export function splitPublicDeps(deps: DeclaredDep[], catalogGroups?: ReadonlySet<string>): PrivacySplit {
   const publicDeps: DeclaredDep[] = [];
   let skippedPrivate = 0;
   for (const d of deps) {
     const coordinate = `${d.group}:${d.artifact}`;
-    if (isCandidatePublicCoordinate(coordinate) && !isPrivateOrInternalGroup(d.group)) {
+    if (isCandidatePublicCoordinate(coordinate, catalogGroups) && !isPrivateOrInternalGroup(d.group, catalogGroups)) {
       publicDeps.push(d);
     } else {
       skippedPrivate++;

@@ -5,7 +5,16 @@
  * Google Maven, or the Gradle Plugin Portal before storing it.
  */
 
+import { CATALOG_GROUPS } from "./catalog-groups";
+
 const COORD = /^[A-Za-z0-9_.-]{1,80}:[A-Za-z0-9_.-]{1,80}$/;
+
+/**
+ * Exact groups that the public 16kb.dev catalog lists. Bundled at build time, and the CLI
+ * adds the groups from the catalog it downloads before any privacy decision. Exact match only:
+ * a listed group never makes its sub-groups or sibling groups public.
+ */
+const BUNDLED_CATALOG_GROUPS: ReadonlySet<string> = new Set(CATALOG_GROUPS);
 
 /** Known public group prefixes: exact match, or prefix followed by a dot. */
 const PUBLIC_GROUP_PREFIXES = [
@@ -106,6 +115,21 @@ const PUBLIC_GROUP_PREFIXES = [
   "jakarta.inject",
   "junit",
   "io.adapty",
+  // Added after auditing every group in https://16kb.dev/api/catalog (Nov 2026).
+  "com.arthenica",
+  "com.auth0.android",
+  "com.braintreepayments",
+  "com.bugsnag",
+  "com.couchbase.lite",
+  "com.datadoghq",
+  "com.ironsource.sdk",
+  "com.journeyapps",
+  "com.microsoft.onnxruntime",
+  "io.github.webrtc-sdk",
+  "org.pytorch",
+  "org.tensorflow",
+  "us.zoom.meetingsdk",
+  "us.zoom.videosdk",
 ];
 
 function hasAllowedPrefix(group: string): boolean {
@@ -116,32 +140,58 @@ function hasAllowedPrefix(group: string): boolean {
   return false;
 }
 
-/** JitPack-style, example, or any group not on the known-public prefix list. */
-export function isPrivateOrInternalGroup(group: string): boolean {
-  const g = group.trim().toLowerCase();
+/** Groups that are always private, even if something claims otherwise. */
+function isAlwaysPrivate(g: string): boolean {
   if (!g) return true;
-  if (g === "com.github" || g.startsWith("com.github.")) return true;
   if (g === "io.jitpack" || g.startsWith("io.jitpack.") || g.includes("jitpack")) return true;
   if (g === "com.example" || g.startsWith("com.example.")) return true;
+  return false;
+}
+
+/**
+ * JitPack-style, example, or any group not on the known-public prefix list and not an exact
+ * group from the 16kb.dev catalog. `catalogGroups` are exact groups from a downloaded catalog.
+ */
+export function isPrivateOrInternalGroup(group: string, catalogGroups?: ReadonlySet<string>): boolean {
+  const g = group.trim().toLowerCase();
+  if (isAlwaysPrivate(g)) return true;
+  // Exact catalog groups are public (for example com.github.bumptech.glide), but only exact matches.
+  if (BUNDLED_CATALOG_GROUPS.has(g) || catalogGroups?.has(g)) return false;
+  if (g === "com.github" || g.startsWith("com.github.")) return true;
   return !hasAllowedPrefix(g);
 }
 
 /** True only for group:artifact names that may be sent as a demand signal. No versions. */
-export function isCandidatePublicCoordinate(coordinate: string): boolean {
+export function isCandidatePublicCoordinate(coordinate: string, catalogGroups?: ReadonlySet<string>): boolean {
   const c = coordinate.trim();
   if (!COORD.test(c)) return false;
   const i = c.lastIndexOf(":");
   const group = c.slice(0, i);
-  return !isPrivateOrInternalGroup(group);
+  return !isPrivateOrInternalGroup(group, catalogGroups);
 }
 
-export function publicDemandCoordinates(coordinates: string[]): string[] {
+/** Exact, lower-cased groups from catalog entries' Maven coordinates (wildcard groups are skipped). */
+export function catalogGroupsFrom(entries: { mavenCoords?: string[] }[]): Set<string> {
+  const out = new Set<string>();
+  for (const e of entries) {
+    for (const c of e.mavenCoords || []) {
+      const i = c.lastIndexOf(":");
+      if (i <= 0) continue;
+      const g = c.slice(0, i).trim().toLowerCase();
+      if (!g || g.includes("*") || isAlwaysPrivate(g)) continue;
+      out.add(g);
+    }
+  }
+  return out;
+}
+
+export function publicDemandCoordinates(coordinates: string[], catalogGroups?: ReadonlySet<string>): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const raw of coordinates) {
     const c = raw.trim().toLowerCase();
     if (seen.has(c)) continue;
-    if (!isCandidatePublicCoordinate(c)) continue;
+    if (!isCandidatePublicCoordinate(c, catalogGroups)) continue;
     seen.add(c);
     out.push(c);
     if (out.length >= 40) break;

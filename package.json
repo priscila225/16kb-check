@@ -1,6 +1,6 @@
 {
   "name": "16kb-check",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Check an Android project for Google Play 16KB page-size compatibility.",
   "keywords": [
     "android",
