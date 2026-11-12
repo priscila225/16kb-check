@@ -2,7 +2,7 @@
 
 Check an Android project for Google Play 16KB page-size compatibility, right in your terminal.
 
-Starting February 1, 2027, Google Play will block app updates that target API 35+ if they are not 16KB ready. Run this at the root of your Android project and get a pass or fail report for every public SDK you declared.
+Google Play requires apps that target Android 15 (API 35) or higher to support 16 KB memory page sizes on 64-bit devices. Starting February 1, 2027, updates that don't support 16 KB page sizes can't be released ([Android Developers](https://developer.android.com/guide/practices/page-sizes)). Run this at the root of your Android project and get a pass or fail report for every public SDK you declared.
 
 ```bash
 npx 16kb-check
@@ -11,27 +11,36 @@ npx 16kb-check
 ## Demo
 
 ```
-SDK                                         Version             Status      Min 16KB          Link                                            
-──────────────────────────────────────────  ──────────────────  ──────────  ────────────────  ────────────────────────────────────────────────
-io.sentry:sentry-android                    7.14.0              not ready   7.18.0            https://16kb.dev/sdk/sentry-android             
-com.mapbox.maps:android                     11.7.0              partial     11.7.0 (-ndk27 …  https://16kb.dev/sdk/mapbox-maps-android        
-org.jetbrains.kotlin.android                2.0.21              ready       —                                                                 
-androidx.annotation:annotation              1.8.0               ready       any (no native …  https://16kb.dev/sdk/androidx-other-java        
-androidx.core:core-ktx                      1.15.0              ready       any (no native …  https://16kb.dev/sdk/androidx-core-ui           
-com.android.application                     8.7.3               ready       any (build tool…  https://16kb.dev/sdk/android-gradle-plugin      
-com.android.library                         —                   ready       any (build tool…  https://16kb.dev/sdk/android-gradle-plugin      
-com.google.firebase:firebase-analytics      BOM com.google.fi…  ready       any (no native …  https://16kb.dev/sdk/firebase-android           
-com.squareup.okhttp3:okhttp                 4.12.0              ready       any (no native …  https://16kb.dev/sdk/okhttp                     
-com.squareup.okio:okio                      3.9.0               ready       any (no native …  https://16kb.dev/sdk/okhttp                     
+SDK                                     Version  Status     Link
+──────────────────────────────────────  ───────  ─────────  ────
+io.sentry:sentry-android                7.14.0   not ready  https://16kb.dev/sdk/sentry-android
+    Min 16 KB version: 7.18.0
+com.mapbox.maps:android                 11.7.0   partial    https://16kb.dev/sdk/mapbox-maps-android
+    Min 16 KB version: 11.7.0 (-ndk27 artifacts)
+androidx.annotation:annotation          1.8.0    ready      https://16kb.dev/sdk/androidx-other-java
+androidx.core:core-ktx                  1.15.0   ready      https://16kb.dev/sdk/androidx-core-ui
+com.google.firebase:firebase-analytics  via BOM  ready      https://16kb.dev/sdk/firebase-android
+com.squareup.okhttp3:okhttp             4.12.0   ready      https://16kb.dev/sdk/okhttp
+com.squareup.okio:okio                  3.9.0    ready      https://16kb.dev/sdk/okhttp
 
-10 public libraries: 8 ready, 1 not ready, 1 partial, 0 checking, 0 unknown.
+"via BOM" means the version comes from this BOM: com.google.firebase:firebase-bom:33.7.0
+
+7 public libraries: 5 ready, 1 not ready, 1 partial, 0 checking, 0 unknown.
 2 private or internal libraries were skipped on this machine and never sent.
+2 test-only dependencies were ignored (test, androidTest, testFixtures and test frameworks).
 2 libraries may block your Feb 1, 2027 release.
+
+Build plugins (build-time only, not packaged into your app, not counted above):
+  com.android.application       8.7.3
+  com.android.library           —
+  org.jetbrains.kotlin.android  2.0.21
+AGP check: Android Gradle Plugin 8.7.3 is 8.5.1 or newer, so uncompressed .so files are zip-aligned to 16 KB.
 
 Note: This report only sees dependencies you declared, not every transitive library Gradle would resolve.
 Note: BOM / platform versions are recorded but not expanded to a concrete module version, except when the SDK is compatible at any version.
 
-Google Play blocks updates targeting API 35+ without 16KB support from Feb 1, 2027.
+This is a dependency-level check. Tip: verify the built APK with `zipalign -c -P 16 -v 4 app.apk` or Android Studio's APK Analyzer.
+Google Play: apps targeting Android 15 (API 35) or higher must support 16 KB page sizes on 64-bit devices. Starting Feb 1, 2027, updates that don't support 16 KB can't be released.
 ```
 
 This is the real output of `npx 16kb-check --path tests/fixtures/android-app --no-color` against the live 16kb.dev catalog. Your project will follow the same shape.
@@ -55,17 +64,35 @@ npx 16kb-check --ci
 npx 16kb-check --no-color
 ```
 
-Requires Node 18 or newer. Until this package is published to npm, you can also run it from the GitHub repo:
-
-```bash
-npx --yes github:priscila225/16kb-check
-```
+Requires Node 18 or newer.
 
 The CLI reads `settings.gradle` / `settings.gradle.kts`, every `build.gradle` / `build.gradle.kts`, and `gradle/libs.versions.toml` (plus other version catalogs in `gradle/`). It understands string coordinates, `group`/`name`/`version` maps, version catalog aliases, simple `${version}` variables, and `platform()` / BOM declarations. Test-only configurations, `project(...)` modules, and local `files()` / `fileTree()` artifacts are ignored.
 
 Results are looked up against the public catalog at [16kb.dev](https://16kb.dev). If a public SDK is not in the database yet, the CLI asks the site to start an automatic check and shows a `checking` status, subject to the site's daily rate limit.
 
 This report only sees dependencies you declared, not every transitive library Gradle would resolve.
+
+### What gets counted
+
+- **Release dependencies** are the only rows in the table and the only ones in the ready / not ready counts. Version catalog bundles (`libs.bundles.*`) are expanded into their libraries.
+- **Test-only dependencies** (`test*`, `androidTest*`, `testFixtures*`, `kaptTest`, `kspAndroidTest`, and well-known test frameworks such as JUnit, Mockito, MockK, Robolectric, AndroidX Test) are ignored. The report says how many were ignored.
+- **Build plugins** (`plugins {}`, `apply plugin:`, catalog `[plugins]`) are listed in their own short section. They run at build time and are not packaged into your app, so they are not counted.
+- **Android Gradle Plugin**: the CLI reads the AGP version from the `plugins {}` block, the version catalog, or `buildscript { classpath "com.android.tools.build:gradle:..." }`. Below 8.5.1 it prints a warning, because AGP 8.5.1+ is what zip-aligns uncompressed `.so` files on 16 KB boundaries. If the version can't be resolved, the report says it was not checked.
+- Versions managed by a BOM show as `via BOM`, and the BOM is named under the table. Coordinates are never cut off.
+
+### Still checking
+
+When a public SDK is new to 16kb.dev, the site checks it in the background, so counts can change between back-to-back runs. The report says when results are still settling. Re-run in a few minutes. `--json` includes `checkedAt` (ISO timestamp) and `settling` (true while anything is still being checked).
+
+### It's a dependency-level check
+
+The CLI checks what you declared, not the APK you built. Verify the final build too:
+
+```bash
+zipalign -c -P 16 -v 4 app.apk
+```
+
+or open the APK in Android Studio's APK Analyzer (Build > Analyze APK) and check the Alignment column for `.so` files.
 
 ## CI example
 
@@ -88,7 +115,15 @@ jobs:
         run: npx --yes 16kb-check --ci --no-color
 ```
 
-`--ci` exits with code 1 when any public library is `not ready` or `partial`. Unknown or still-checking libraries do not fail the build.
+`--ci` exits with code 1 when any public library is `not ready` or `partial`. Unknown or still-checking libraries, and the AGP warning, do not fail the build.
+
+### npm update notice
+
+When you run through `npx`, npm itself may print a "New major version of npm available" notice after the report. That line comes from npm, not from 16kb-check. To turn it off (for example when you parse `--json` output), set:
+
+```bash
+npm_config_update_notifier=false npx --yes 16kb-check --json
+```
 
 ## Privacy
 
