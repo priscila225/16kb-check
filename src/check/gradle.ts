@@ -1,12 +1,41 @@
 import type { DeclaredDep, VersionCatalog } from "./types";
-import { resolveCatalogLibrary } from "./toml";
+import { isBundleAccessor, resolveCatalogBundle, resolveCatalogLibrary } from "./toml";
 
-const SKIP_CONFIG = /^(?:androidT|t)est[A-Z]|TestFixtures|testFixtures/;
-const CONFIG = /(?:^|[\s,(])((?:[A-Za-z][\w]*)?(?:[Ii]mplementation|[Aa]pi|[Cc]ompileOnly(?:Api)?|[Rr]untimeOnly|[Cc]ompile|[Pp]rovided|[Kk]apt|[Kk]sp|[Aa]nnotationProcessor|[Aa]nnotationProcessor))\s*[\s(]/g;
-
-/** True if this configuration should be ignored (test-only). */
+/**
+ * True if this configuration only feeds tests: test*, androidTest*, testFixtures*,
+ * and variant or processor forms like debugTestImplementation, kaptTest, kspAndroidTest.
+ */
 export function isTestConfiguration(name: string): boolean {
-  return SKIP_CONFIG.test(name) || /^test[A-Z]/.test(name) || name.startsWith("androidTest") || name.startsWith("testFixtures");
+  return /^test(?:[A-Z]|$)/.test(name) || /^androidTest/.test(name) || /^testFixtures/.test(name) || /Test(?:[A-Z]|$)/.test(name) || /TestFixtures/.test(name);
+}
+
+/**
+ * Well-known test frameworks. They never ship in a release build, so they are treated as
+ * test-only even when a module declares them with a non-test configuration
+ * (for example a shared test-utils module, or debugImplementation(ui-test-manifest)).
+ */
+export function isTestFrameworkCoordinate(group: string, artifact: string): boolean {
+  const g = group.toLowerCase();
+  const a = artifact.toLowerCase();
+  if (g === "junit" && a === "junit") return true;
+  if (g === "org.junit" || g.startsWith("org.junit.")) return true;
+  if (g === "org.mockito" || g.startsWith("org.mockito.")) return true;
+  if (g === "io.mockk") return true;
+  if (g === "org.robolectric") return true;
+  if (g === "org.hamcrest") return true;
+  if (g === "com.google.truth" || g.startsWith("com.google.truth.")) return true;
+  if (g === "app.cash.turbine") return true;
+  if (g === "androidx.test" || g.startsWith("androidx.test.")) return true;
+  if (g === "androidx.arch.core" && a === "core-testing") return true;
+  if (g === "androidx.compose.ui" && a.startsWith("ui-test")) return true;
+  if (g === "androidx.fragment" && a === "fragment-testing") return true;
+  if (g === "androidx.room" && a === "room-testing") return true;
+  if (g === "androidx.work" && a === "work-testing") return true;
+  if (g === "androidx.navigation" && a === "navigation-testing") return true;
+  if (g === "org.jetbrains.kotlinx" && a.startsWith("kotlinx-coroutines-test")) return true;
+  if (g === "org.jetbrains.kotlin" && (a === "kotlin-test" || a.startsWith("kotlin-test-"))) return true;
+  if (g === "com.squareup.okhttp3" && a === "mockwebserver") return true;
+  return false;
 }
 
 function stripBlockComments(text: string): string {
@@ -179,22 +208,31 @@ function lookAroundCall(text: string, index: number): { config: string; call: st
  * Best-effort: string coordinates, group:/name:/version: maps, platform/BOM, libs.* catalog aliases,
  * and simple ${var} / $var substitution.
  */
-export function parseGradle(text: string, file: string, catalog?: VersionCatalog, extraVars: Record<string, string> = {}): { dependencies: DeclaredDep[]; boms: DeclaredDep[]; issues: string[] } {
+export function parseGradle(
+  text: string,
+  file: string,
+  catalog?: VersionCatalog,
+  extraVars: Record<string, string> = {},
+): { dependencies: DeclaredDep[]; boms: DeclaredDep[]; testDependencies: DeclaredDep[]; issues: string[] } {
   const cleaned = stripLineComments(stripBlockComments(text));
   const vars = { ...collectVariables(cleaned), ...extraVars };
-  const deps: DeclaredDep[] = [];
+  const mainDeps: DeclaredDep[] = [];
+  const testDeps: DeclaredDep[] = [];
   const boms: DeclaredDep[] = [];
+  const testBoms: DeclaredDep[] = [];
   const issues: string[] = [];
 
   const isKts = /\.kts$/i.test(file) || /implementation\(/.test(cleaned);
 
   // Walk dependency-like function calls. We scan for configuration names then parse the argument.
-  const ident = /(?:^|[\s,{])((?:[A-Za-z][\w]*)?(?:[Ii]mplementation|[Aa]pi|[Cc]ompileOnly(?:Api)?|[Rr]untimeOnly|[Cc]ompile|[Pp]rovided|[Kk]apt|[Kk]sp|[Aa]nnotationProcessor))\s*(\(|(?:\s+(?=["'lpg])))/g;
+  // Also matches the Kotlin DSL string form: "testImplementation"("...")
+  const ident = /(?:^|[\s,{;"'])((?:[A-Za-z][\w]*)?(?:[Ii]mplementation|[Aa]pi|[Cc]ompileOnly(?:Api)?|[Rr]untimeOnly|[Cc]ompile|[Pp]rovided|[Kk]apt|[Kk]sp|[Aa]nnotationProcessor)(?:AndroidTest|Test)?)["']?\s*(\(|(?:\s+(?=["'lpg])))/g;
 
   let m: RegExpExecArray | null;
   while ((m = ident.exec(cleaned))) {
     const configuration = m[1];
-    if (isTestConfiguration(configuration)) continue;
+    const isTest = isTestConfiguration(configuration);
+    const deps = isTest ? testDeps : mainDeps;
     const start = m.index + m[0].length - (m[2].startsWith("(") ? 1 : 0);
     // Grab a window of the argument
     const window = readArg(cleaned, start);
@@ -202,7 +240,7 @@ export function parseGradle(text: string, file: string, catalog?: VersionCatalog
     const arg = window.text.trim();
     if (!arg) continue;
 
-    const opts: PushOpts = { file, configuration, catalog, vars, boms };
+    const opts: PushOpts = { file, configuration, catalog, vars, boms: isTest ? testBoms : boms };
     const isBom = /\b(?:enforcedP|p)latform\s*\(/.test(arg);
 
     // project( / files( / fileTree( / name: 'local' ext: 'aar'
@@ -210,9 +248,35 @@ export function parseGradle(text: string, file: string, catalog?: VersionCatalog
     if (/\bext\s*[:=]\s*['"]aar['"]/.test(arg) && !/:/.test(arg.replace(/ext\s*[:=].*/, ""))) continue;
 
     // Catalog: libs.foo.bar or libs.foo.bar.get() or libs.foo.asProvider()
-    const cat = arg.match(/\blibs(?:\.([A-Za-z][\w.]*)|(?:\[(?:["'])([^"']+)["']\]))(?:\s*\.get\(\))?/);
+    // libs.foo.bar, libs["foo-bar"], libs.bundles["foo-bar"], optionally followed by .get()
+    const catRaw = arg.match(/\blibs((?:\.[A-Za-z][\w]*)*)(?:\[\s*["']([^"']+)["']\s*\])?(?:\s*\.get\(\))?/);
+    const cat =
+      catRaw && (catRaw[1] || catRaw[2])
+        ? [catRaw[0], [catRaw[1].replace(/^\./, "").replace(/\.get$/, ""), catRaw[2] || ""].filter(Boolean).join("."), ""]
+        : null;
     if (cat && catalog) {
       const accessor = (cat[1] || cat[2] || "").replace(/\.+$/, "");
+      if (isBundleAccessor(accessor)) {
+        const bundle = resolveCatalogBundle(catalog, accessor);
+        if (bundle) {
+          for (const lib of bundle.libraries) {
+            pushDep(deps, opts, {
+              group: lib.group,
+              artifact: lib.artifact,
+              version: lib.version,
+              catalogAlias: lib.alias,
+              versionSource: lib.version ? "catalog" : "missing",
+            });
+          }
+          for (const missing of bundle.missing) {
+            issues.push(`Bundle libs.${accessor} lists "${missing}", which is not in [libraries] (${file})`);
+          }
+          continue;
+        }
+        issues.push(`Could not resolve catalog bundle libs.${accessor} in ${file}`);
+        pushDep(deps, opts, { group: "libs", artifact: accessor, version: "", catalogAlias: accessor, versionSource: "missing" });
+        continue;
+      }
       const resolved = resolveCatalogLibrary(catalog, accessor);
       if (resolved) {
         pushDep(deps, opts, {
@@ -261,7 +325,14 @@ export function parseGradle(text: string, file: string, catalog?: VersionCatalog
 
   void lookAroundCall;
   void isKts;
-  return { dependencies: deps, boms, issues };
+  // Well-known test frameworks declared with a non-test configuration are still test-only.
+  const dependencies: DeclaredDep[] = [];
+  for (const d of mainDeps) {
+    if (isTestFrameworkCoordinate(d.group, d.artifact)) testDeps.push({ ...d, testOnly: true });
+    else dependencies.push(d);
+  }
+  for (const d of testDeps) d.testOnly = true;
+  return { dependencies, boms, testDependencies: testDeps, issues };
 }
 
 function parseMapForm(arg: string, vars: Record<string, string>): { group: string; artifact: string; version: string; versionSource: DeclaredDep["versionSource"] } | null {

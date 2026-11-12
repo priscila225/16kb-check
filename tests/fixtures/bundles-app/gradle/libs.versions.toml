@@ -1,0 +1,30 @@
+[versions]
+adsSdk = "3.2.1"
+consent = "2.0.10"
+kotlin = "2.0.21"
+composeBom = "2024.10.01"
+junitJupiter = "5.11.3"
+
+[libraries]
+# Made-up public-looking coordinates for the bundle tests. Not real libraries.
+adsSdk = { module = "com.example:ads-sdk", version.ref = "adsSdk" }
+consent = { group = "com.example", name = "consent-decoder", version.ref = "consent" }
+moshi = { module = "com.squareup.moshi:moshi", version = "1.15.1" }
+retrofit = { module = "com.squareup.retrofit2:retrofit", version = "2.11.0" }
+androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+androidx-compose-material3-adaptive-navigation-suite = { module = "androidx.compose.material3:material3-adaptive-navigation-suite" }
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version = "1.7.0" }
+junit-jupiter-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junitJupiter" }
+androidx-test-runner = { module = "androidx.test:runner", version = "1.6.2" }
+
+[plugins]
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+
+[bundles]
+net-stack = [
+    "moshi",
+    "retrofit",
+]
+ui_kit = ["androidx-appcompat"]
+adsSdk = ["adsSdk", "consent"]

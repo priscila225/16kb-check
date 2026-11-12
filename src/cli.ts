@@ -8,7 +8,9 @@ import { buildReport, markPublicChecking } from "./check/match";
 import type { CatalogEntry, CheckReport, DeclaredDep } from "./check/types";
 import { splitPublicDeps } from "./privacy";
 import { createClient, enqueuePublicUnknown, fetchCatalog, type ApiClient } from "./api";
-import { annotateGradlePlugins, ciShouldFail, formatTable, toJson, useColor, type ColorMode } from "./report";
+import { annotateGradlePlugins, ciShouldFail, formatTable, toJson, useColor, type ColorMode, type ReportExtras } from "./report";
+import { checkAgp, isAgpPlugin } from "./check/agp";
+import { isCandidatePublicCoordinate, isPrivateOrInternalGroup } from "./check/public-coords";
 
 export const HELP = `16kb-check — check an Android project for Google Play 16KB page-size compatibility.
 
@@ -113,6 +115,7 @@ export async function run(argv: string[], io: RunIo = { stdout: process.stdout, 
   const parsed = parseProjectFiles(discovered.files);
   const { publicDeps, skippedPrivate } = splitPublicDeps(parsed.dependencies);
   const publicParsed = { ...parsed, dependencies: publicDeps };
+  const extras = buildExtras(parsed.plugins, parsed.testDependencies.length);
 
   const client = io.api || createClient();
   let catalog: CatalogEntry[] = io.catalog || [];
@@ -172,15 +175,36 @@ export async function run(argv: string[], io: RunIo = { stdout: process.stdout, 
     }
   }
 
+  extras.checkedAt = new Date().toISOString();
   const color = useColor(opts.color, io.stdout);
   if (opts.json) {
-    io.stdout.write(JSON.stringify(toJson(report, skippedPrivate), null, 2) + "\n");
+    io.stdout.write(JSON.stringify(toJson(report, skippedPrivate, extras), null, 2) + "\n");
   } else {
-    io.stdout.write(formatTable(report, skippedPrivate, color));
+    io.stdout.write(formatTable(report, skippedPrivate, color, extras));
   }
 
   const exitCode = opts.ci && ciShouldFail(report) ? 1 : 0;
   return { exitCode, report, skippedPrivate };
+}
+
+/**
+ * Build plugins never leave this machine. Only public plugin ids are printed;
+ * private or unrecognized ones (for example convention plugins) are only counted.
+ */
+export function buildExtras(plugins: DeclaredDep[], testOnlyIgnored: number): ReportExtras {
+  const shown: NonNullable<ReportExtras["plugins"]> = [];
+  let hidden = 0;
+  for (const p of plugins) {
+    const isClasspathAgp = p.group === "com.android.tools.build" && p.artifact === "gradle";
+    const id = isClasspathAgp ? "com.android.tools.build:gradle" : p.group;
+    const publicId = isCandidatePublicCoordinate(`${p.group}:${p.artifact}`) && !isPrivateOrInternalGroup(p.group);
+    if (!publicId) {
+      hidden++;
+      continue;
+    }
+    shown.push({ id, version: p.version, agp: isAgpPlugin(p) });
+  }
+  return { plugins: shown, hiddenPlugins: hidden, testOnlyIgnored, agp: checkAgp(plugins) };
 }
 
 async function main(): Promise<void> {

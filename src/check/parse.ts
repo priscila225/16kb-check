@@ -1,7 +1,7 @@
 import type { DeclaredDep, ParseResult, VersionCatalog } from "./types";
 import { parseVersionCatalog } from "./toml";
-import { parseGradle, mergeVars } from "./gradle";
-import { parsePlugins, pluginsFromCatalog } from "./plugins";
+import { parseGradle, mergeVars, isTestFrameworkCoordinate } from "./gradle";
+import { parseBuildscriptAgp, parsePlugins, pluginsFromCatalog, isAgpLibraryCoordinate, agpPluginFromLibrary } from "./plugins";
 
 export type InputFile = { name: string; text: string };
 
@@ -63,10 +63,13 @@ export function parseProjectFiles(files: InputFile[]): ParseResult {
 
   const allDeps: DeclaredDep[] = [];
   const allBoms: DeclaredDep[] = [];
+  const allTest: DeclaredDep[] = [];
+  const allPlugins: DeclaredDep[] = [];
 
   for (const f of gradleFiles) {
     const parsed = parseGradle(f.text, f.name, catalog);
     allDeps.push(...parsed.dependencies);
+    allTest.push(...parsed.testDependencies);
     allBoms.push(...parsed.boms);
     for (const msg of parsed.issues) issues.push({ file: f.name, message: msg });
     const info = fileInfos.find((x) => x.name === f.name && x.kind === "gradle");
@@ -89,6 +92,8 @@ export function parseProjectFiles(files: InputFile[]): ParseResult {
       };
       if (isBom) {
         allBoms.push(dep);
+      } else if (isTestFrameworkCoordinate(dep.group, dep.artifact)) {
+        allTest.push({ ...dep, testOnly: true });
       } else {
         allDeps.push(dep);
       }
@@ -105,39 +110,67 @@ export function parseProjectFiles(files: InputFile[]): ParseResult {
   }
 
   // Plugins from Gradle / settings files, and from the catalog when no Gradle file declared them.
+  // Plugins are build-time only, so they are kept apart from the release dependencies.
   const pluginKeys = new Set<string>();
   for (const f of gradleFiles) {
     const parsedPlugins = parsePlugins(f.text, f.name, catalog);
     for (const msg of parsedPlugins.issues) issues.push({ file: f.name, message: msg });
     for (const plug of parsedPlugins.plugins) {
-      allDeps.push(plug);
+      allPlugins.push(plug);
       pluginKeys.add(`${plug.group}:${plug.artifact}`.toLowerCase());
     }
+    // buildscript { dependencies { classpath "com.android.tools.build:gradle:8.7.3" } }
+    const agp = parseBuildscriptAgp(f.text, f.name, catalog);
+    if (agp) allPlugins.push(agp);
   }
   if (catalog) {
     const tomlName = files.find((f) => detectKind(f.name, f.text) === "toml")?.name || "libs.versions.toml";
     for (const plug of pluginsFromCatalog(catalog, tomlName)) {
       const k = `${plug.group}:${plug.artifact}`.toLowerCase();
-      if (pluginKeys.has(k)) continue;
-      // Only add catalog-only plugins when we had no Gradle plugin block at all, or the alias was never applied.
+      if (pluginKeys.has(k)) {
+        // Applied by alias or id without a version: borrow the catalog version.
+        for (const p of allPlugins) {
+          if (`${p.group}:${p.artifact}`.toLowerCase() === k && !p.version && plug.version) {
+            p.version = plug.version;
+            p.versionSource = plug.versionSource;
+          }
+        }
+        continue;
+      }
+      // Only add catalog-only plugins when we had no Gradle file at all.
       if (gradleFiles.length === 0) {
-        allDeps.push(plug);
+        allPlugins.push(plug);
         pluginKeys.add(k);
       }
     }
   }
-
-  // De-duplicate by group:artifact
-  const merged = new Map<string, DeclaredDep>();
+  // AGP declared as a library (buildSrc / build-logic: implementation("com.android.tools.build:gradle:x")).
+  const releaseDeps: DeclaredDep[] = [];
   for (const d of allDeps) {
-    const k = keyOf(d);
-    const prev = merged.get(k);
-    merged.set(k, prev ? better(prev, d) : d);
+    if (isAgpLibraryCoordinate(d.group, d.artifact)) allPlugins.push(agpPluginFromLibrary(d));
+    else releaseDeps.push(d);
   }
+
+  const dedupe = (list: DeclaredDep[]): DeclaredDep[] => {
+    const merged = new Map<string, DeclaredDep>();
+    for (const d of list) {
+      const k = keyOf(d);
+      const prev = merged.get(k);
+      merged.set(k, prev ? better(prev, d) : d);
+    }
+    return [...merged.values()].sort((a, b) => keyOf(a).localeCompare(keyOf(b)));
+  };
+
+  const dependencies = dedupe(releaseDeps);
+  const releaseKeys = new Set(dependencies.map(keyOf));
+  // A library declared for both release and tests counts as a release dependency.
+  const testDependencies = dedupe(allTest).filter((d) => !releaseKeys.has(keyOf(d)));
 
   void mergeVars;
   return {
-    dependencies: [...merged.values()].sort((a, b) => keyOf(a).localeCompare(keyOf(b))),
+    dependencies,
+    plugins: dedupe(allPlugins),
+    testDependencies,
     boms: allBoms,
     files: fileInfos,
     issues,

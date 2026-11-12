@@ -97,6 +97,22 @@ function parseArray(raw: string): string[] {
   return parts;
 }
 
+/** True when every [ opened outside quotes is closed. */
+function bracketsBalanced(text: string): boolean {
+  let depth = 0;
+  let inS = false;
+  let inD = false;
+  for (const c of text) {
+    if (c === "'" && !inD) inS = !inS;
+    else if (c === '"' && !inS) inD = !inD;
+    else if (!inS && !inD) {
+      if (c === "[") depth++;
+      else if (c === "]") depth--;
+    }
+  }
+  return depth <= 0;
+}
+
 function libraryFromFields(alias: string, fields: Record<string, string>): CatalogLibrary | null {
   let group = fields.group || "";
   let artifact = fields.name || "";
@@ -152,8 +168,19 @@ export function parseVersionCatalog(text: string): VersionCatalog {
 
   const headerRe = /^\[([^\]]+)\]\s*$/;
 
-  for (const rawLine of lines) {
-    const line = stripComment(rawLine).trim();
+  for (let li = 0; li < lines.length; li++) {
+    let line = stripComment(lines[li]).trim();
+    // Multi-line arrays, e.g. a bundle spread over several lines:
+    //   name = [
+    //     "a",
+    //     "b",
+    //   ]
+    if (/^[^=\[]+=\s*\[/.test(line) && !bracketsBalanced(line)) {
+      while (li + 1 < lines.length && !bracketsBalanced(line)) {
+        li++;
+        line += " " + stripComment(lines[li]).trim();
+      }
+    }
     if (!line) continue;
     const h = headerRe.exec(line);
     if (h) {
@@ -227,30 +254,64 @@ export function aliasCandidates(accessor: string): string[] {
   return [...out];
 }
 
-export function resolveCatalogLibrary(catalog: VersionCatalog, accessor: string): { group: string; artifact: string; version: string; alias: string } | null {
-  const path = accessor.replace(/^libs\./, "");
-  const candidates = aliasCandidates(path);
-  let lib: CatalogLibrary | undefined;
-  let alias = "";
-  for (const c of candidates) {
-    if (catalog.libraries[c]) {
-      lib = catalog.libraries[c];
-      alias = c;
-      break;
-    }
+/**
+ * Gradle turns `-`, `_` and `.` in catalog aliases into `.` for the generated accessor.
+ * Compare in that normalized form, case-insensitively, so camelCase, dot and dash
+ * variants of the same alias all match.
+ */
+export function normalizeAlias(alias: string): string {
+  return alias.replace(/^libs\./, "").replace(/[-_.]+/g, ".").toLowerCase();
+}
+
+function findByAlias<T>(table: Record<string, T>, accessor: string): { key: string; value: T } | null {
+  for (const c of aliasCandidates(accessor)) {
+    if (Object.prototype.hasOwnProperty.call(table, c)) return { key: c, value: table[c] };
   }
-  // Also try walking keys with the same accessor form
-  if (!lib) {
-    for (const [k, v] of Object.entries(catalog.libraries)) {
-      if (k.replace(/[-_]/g, ".") === path) {
-        lib = v;
-        alias = k;
-        break;
-      }
-    }
+  const want = normalizeAlias(accessor);
+  for (const [k, v] of Object.entries(table)) {
+    if (normalizeAlias(k) === want) return { key: k, value: v };
   }
-  if (!lib) return null;
+  return null;
+}
+
+export type ResolvedCatalogLibrary = { group: string; artifact: string; version: string; alias: string };
+
+function resolvedFrom(catalog: VersionCatalog, alias: string, lib: CatalogLibrary): ResolvedCatalogLibrary {
   let version = lib.version || "";
   if (!version && lib.versionRef) version = catalog.versions[lib.versionRef] || "";
   return { group: lib.group, artifact: lib.artifact, version, alias };
+}
+
+export function resolveCatalogLibrary(catalog: VersionCatalog, accessor: string): ResolvedCatalogLibrary | null {
+  const path = accessor.replace(/^libs\./, "");
+  const hit = findByAlias(catalog.libraries, path);
+  if (!hit) return null;
+  return resolvedFrom(catalog, hit.key, hit.value);
+}
+
+/** True when a `libs.*` accessor points at a bundle (`libs.bundles.x`). */
+export function isBundleAccessor(accessor: string): boolean {
+  return /^(?:libs\.)?bundles\./.test(accessor);
+}
+
+/**
+ * Resolve `libs.bundles.<name>` to its libraries. Returns null when the bundle is unknown.
+ * Bundle members that are not in [libraries] are reported in `missing`.
+ */
+export function resolveCatalogBundle(
+  catalog: VersionCatalog,
+  accessor: string,
+): { bundle: string; libraries: ResolvedCatalogLibrary[]; missing: string[] } | null {
+  const name = accessor.replace(/^libs\./, "").replace(/^bundles\./, "");
+  if (!name) return null;
+  const hit = findByAlias(catalog.bundles, name);
+  if (!hit) return null;
+  const libraries: ResolvedCatalogLibrary[] = [];
+  const missing: string[] = [];
+  for (const member of hit.value) {
+    const lib = findByAlias(catalog.libraries, member);
+    if (lib) libraries.push(resolvedFrom(catalog, lib.key, lib.value));
+    else missing.push(member);
+  }
+  return { bundle: hit.key, libraries, missing };
 }

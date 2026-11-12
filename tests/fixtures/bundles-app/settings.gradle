@@ -1,0 +1,2 @@
+rootProject.name = "BundlesDemo"
+include ':app'
