@@ -337,6 +337,8 @@ export function fromSharePayload(payload: SharePayload): ParseResult {
   }));
   return {
     dependencies,
+    plugins: [],
+    testDependencies: [],
     boms: [],
     files: (payload.files || []).map((name) => ({ name, kind: "unknown" as const, depCount: 0 })),
     issues: [],

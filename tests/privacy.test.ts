@@ -93,3 +93,39 @@ test("CLI JSON run on the fixture never prints private coordinates", async () =>
   assert.ok(sdks.includes("io.sentry:sentry-android"));
   assert.ok(!sdks.some((s: string) => s.includes("github")));
 });
+
+test("bundles fixture: private bundle members, test deps, and convention plugins never appear", async () => {
+  const bundles = join(dirname(fileURLToPath(import.meta.url)), "fixtures/bundles-app");
+  for (const argv of [["--path", bundles, "--no-color"], ["--path", bundles, "--json"]]) {
+    let out = "";
+    let err = "";
+    await run(argv, {
+      stdout: { write: (s) => { out += s; }, isTTY: false },
+      stderr: { write: (s) => { err += s; }, isTTY: false },
+      catalog,
+      enqueue: false,
+    });
+    for (const blob of [out, err]) {
+      assert.doesNotMatch(blob, /com\.example|ads-sdk|consent-decoder|acme/);
+    }
+  }
+});
+
+test("demand requests never include private bundle members", async () => {
+  const bundles = join(dirname(fileURLToPath(import.meta.url)), "fixtures/bundles-app");
+  const bodies: string[] = [];
+  const fakeFetch = (async (url: string, init?: { body?: string }) => {
+    if (init?.body) bodies.push(init.body);
+    const payload = String(url).endsWith("/api/catalog") ? { ok: true, count: 0, entries: [] } : { ok: true, accepted: 0, jobs: [] };
+    return new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as unknown as typeof fetch;
+  await run(["--path", bundles, "--json"], {
+    stdout: { write: () => {}, isTTY: false },
+    stderr: { write: () => {}, isTTY: false },
+    api: { baseUrl: "https://example.invalid", fetch: fakeFetch },
+  });
+  assert.ok(bodies.length >= 1, "unknown public libraries are sent as a demand signal");
+  for (const b of bodies) {
+    assert.doesNotMatch(b, /com\.example|ads-sdk|consent-decoder|acme|junit|mockito|gradle\.plugin|com\.android\.tools/);
+  }
+});

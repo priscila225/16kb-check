@@ -13,6 +13,8 @@ export type DeclaredDep = {
   /** BOM coordinate when the version is managed by a platform() / BOM. */
   bom?: string;
   sourceFile: string;
+  /** Declared only for tests (test, androidTest, testFixtures, or a known test framework). */
+  testOnly?: boolean;
 };
 
 export type ParseIssue = {
@@ -21,7 +23,12 @@ export type ParseIssue = {
 };
 
 export type ParseResult = {
+  /** Release dependencies: what ships in the app. No plugins, no test-only libraries. */
   dependencies: DeclaredDep[];
+  /** Gradle plugins (plugins {}, apply plugin, catalog [plugins], buildscript classpath AGP). */
+  plugins: DeclaredDep[];
+  /** Test-only dependencies, kept out of readiness counts. */
+  testDependencies: DeclaredDep[];
   boms: { group: string; artifact: string; version: string; sourceFile: string }[];
   files: { name: string; kind: "toml" | "gradle" | "unknown"; depCount: number }[];
   issues: ParseIssue[];

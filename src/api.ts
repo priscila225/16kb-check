@@ -1,8 +1,9 @@
 import type { CatalogEntry, DeclaredDep } from "./check/types";
 import { publicDemandCoordinates } from "./check/public-coords";
+import { VERSION } from "./version";
 
 export const DEFAULT_API_BASE = "https://16kb.dev";
-export const USER_AGENT = "16kb-check/0.1.0 (+https://16kb.dev)";
+export const USER_AGENT = `16kb-check/${VERSION} (+https://16kb.dev)`;
 
 const PUBLIC_VERSION = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$/;
 

@@ -1,4 +1,6 @@
 import type { DeclaredDep, VersionCatalog } from "./types";
+import { collectVariables, substituteVars } from "./gradle";
+import { resolveCatalogLibrary } from "./toml";
 
 /** Turn a Gradle accessor like `android.application` into possible catalog plugin aliases. */
 export function pluginAliasCandidates(accessor: string): string[] {
@@ -171,4 +173,51 @@ export function pluginsFromCatalog(catalog: VersionCatalog, sourceFile: string):
     );
   }
   return out;
+}
+
+/** com.android.tools.build:gradle is the Maven coordinate of the Android Gradle Plugin. */
+export function isAgpLibraryCoordinate(group: string, artifact: string): boolean {
+  return group === "com.android.tools.build" && artifact === "gradle";
+}
+
+export function agpPluginFromLibrary(dep: DeclaredDep): DeclaredDep {
+  return { ...dep, group: "com.android.tools.build", artifact: "gradle", configuration: "plugin" };
+}
+
+/**
+ * buildscript { dependencies { classpath "com.android.tools.build:gradle:8.7.3" } }
+ * Also handles ${var} versions and classpath(libs.android.gradle.plugin).
+ */
+export function parseBuildscriptAgp(text: string, file: string, catalog?: VersionCatalog): DeclaredDep | null {
+  const cleaned = stripLineComments(stripBlockComments(text));
+  const vars = collectVariables(cleaned);
+  const str = /\bclasspath\s*\(?\s*["']com\.android\.tools\.build:gradle:([^"']+)["']/.exec(cleaned);
+  if (str) {
+    const sub = substituteVars(str[1], vars);
+    const version = /\$/.test(sub.value) ? "" : sub.value.trim();
+    return agpPluginFromLibrary({
+      group: "com.android.tools.build",
+      artifact: "gradle",
+      version,
+      versionSource: version ? (sub.usedVar ? "variable" : "declared") : "missing",
+      configuration: "plugin",
+      sourceFile: file,
+    });
+  }
+  const cat = /\bclasspath\s*\(?\s*libs\.([A-Za-z][\w.]*)/.exec(cleaned);
+  if (cat && catalog) {
+    const resolved = resolveCatalogLibrary(catalog, cat[1].replace(/\.get\(\)$/, "").replace(/\.+$/, ""));
+    if (resolved && isAgpLibraryCoordinate(resolved.group, resolved.artifact)) {
+      return {
+        group: "com.android.tools.build",
+        artifact: "gradle",
+        version: resolved.version,
+        versionSource: resolved.version ? "catalog" : "missing",
+        configuration: "plugin",
+        catalogAlias: resolved.alias,
+        sourceFile: file,
+      };
+    }
+  }
+  return null;
 }
