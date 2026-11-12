@@ -1,6 +1,7 @@
 import type { DeclaredDep, ParseResult, VersionCatalog } from "./types";
 import { parseVersionCatalog } from "./toml";
 import { parseGradle, mergeVars, isTestFrameworkCoordinate } from "./gradle";
+import { classifyBuildFile, includedBuildDirs, isBuildToolingCoordinate, type ModuleKind } from "./modules";
 import { parseBuildscriptAgp, parsePlugins, pluginsFromCatalog, isAgpLibraryCoordinate, agpPluginFromLibrary } from "./plugins";
 
 export type InputFile = { name: string; text: string };
@@ -64,12 +65,35 @@ export function parseProjectFiles(files: InputFile[]): ParseResult {
   const allDeps: DeclaredDep[] = [];
   const allBoms: DeclaredDep[] = [];
   const allTest: DeclaredDep[] = [];
+  const allTooling: DeclaredDep[] = [];
   const allPlugins: DeclaredDep[] = [];
+
+  // Which module does each build file belong to? Build logic and test-only modules never ship.
+  const included = includedBuildDirs(gradleFiles);
+  const kindOf = new Map<string, ModuleKind>();
+  for (const f of gradleFiles) {
+    let kind = classifyBuildFile(f.name, f.text, included);
+    // A module that applies com.android.test (also through a catalog alias) is test-only.
+    if (kind === "app" && parsePlugins(f.text, f.name, catalog).plugins.some((p) => p.group === "com.android.test")) kind = "test";
+    kindOf.set(f.name, kind);
+  }
 
   for (const f of gradleFiles) {
     const parsed = parseGradle(f.text, f.name, catalog);
-    allDeps.push(...parsed.dependencies);
-    allTest.push(...parsed.testDependencies);
+    const kind = kindOf.get(f.name) || "app";
+    if (kind === "tooling") {
+      for (const d of [...parsed.dependencies, ...parsed.testDependencies, ...parsed.processorDependencies]) {
+        // AGP on a build-logic classpath still tells us the AGP version.
+        if (isAgpLibraryCoordinate(d.group, d.artifact)) allPlugins.push(agpPluginFromLibrary(d));
+        else allTooling.push(d);
+      }
+    } else if (kind === "test") {
+      for (const d of [...parsed.dependencies, ...parsed.testDependencies, ...parsed.processorDependencies]) allTest.push({ ...d, testOnly: true });
+    } else {
+      allDeps.push(...parsed.dependencies);
+      allTest.push(...parsed.testDependencies);
+      allTooling.push(...parsed.processorDependencies);
+    }
     allBoms.push(...parsed.boms);
     for (const msg of parsed.issues) issues.push({ file: f.name, message: msg });
     const info = fileInfos.find((x) => x.name === f.name && x.kind === "gradle");
@@ -92,6 +116,8 @@ export function parseProjectFiles(files: InputFile[]): ParseResult {
       };
       if (isBom) {
         allBoms.push(dep);
+      } else if (isBuildToolingCoordinate(dep.group, dep.artifact)) {
+        allTooling.push(dep);
       } else if (isTestFrameworkCoordinate(dep.group, dep.artifact)) {
         allTest.push({ ...dep, testOnly: true });
       } else {
@@ -113,6 +139,8 @@ export function parseProjectFiles(files: InputFile[]): ParseResult {
   // Plugins are build-time only, so they are kept apart from the release dependencies.
   const pluginKeys = new Set<string>();
   for (const f of gradleFiles) {
+    // Convention-plugin and other build-logic modules only apply kotlin-dsl and friends.
+    if (kindOf.get(f.name) === "tooling") continue;
     const parsedPlugins = parsePlugins(f.text, f.name, catalog);
     for (const msg of parsedPlugins.issues) issues.push({ file: f.name, message: msg });
     for (const plug of parsedPlugins.plugins) {
@@ -148,6 +176,7 @@ export function parseProjectFiles(files: InputFile[]): ParseResult {
   const releaseDeps: DeclaredDep[] = [];
   for (const d of allDeps) {
     if (isAgpLibraryCoordinate(d.group, d.artifact)) allPlugins.push(agpPluginFromLibrary(d));
+    else if (isBuildToolingCoordinate(d.group, d.artifact)) allTooling.push(d);
     else releaseDeps.push(d);
   }
 
@@ -165,12 +194,14 @@ export function parseProjectFiles(files: InputFile[]): ParseResult {
   const releaseKeys = new Set(dependencies.map(keyOf));
   // A library declared for both release and tests counts as a release dependency.
   const testDependencies = dedupe(allTest).filter((d) => !releaseKeys.has(keyOf(d)));
+  const buildToolingDependencies = dedupe(allTooling).filter((d) => !releaseKeys.has(keyOf(d)));
 
   void mergeVars;
   return {
     dependencies,
     plugins: dedupe(allPlugins),
     testDependencies,
+    buildToolingDependencies,
     boms: allBoms,
     files: fileInfos,
     issues,

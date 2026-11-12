@@ -50,8 +50,11 @@ async function readJson(res: Response, what: string): Promise<unknown> {
   return res.json();
 }
 
-export async function fetchCatalog(client: ApiClient): Promise<CatalogEntry[]> {
-  const res = await client.fetch(`${client.baseUrl}/api/catalog`, {
+export async function fetchCatalog(client: ApiClient, opts: { fresh?: boolean } = {}): Promise<CatalogEntry[]> {
+  // fresh skips the CDN copy (cached up to a few minutes) when the server says an entry exists
+  // that the cached catalog did not have yet.
+  const url = `${client.baseUrl}/api/catalog${opts.fresh ? `?fresh=${Date.now()}` : ""}`;
+  const res = await client.fetch(url, {
     headers: { Accept: "application/json", "User-Agent": USER_AGENT },
   });
   const data = (await readJson(res, "catalog")) as CatalogResponse;
@@ -77,8 +80,12 @@ export async function fetchCatalog(client: ApiClient): Promise<CatalogEntry[]> {
 export async function enqueuePublicUnknown(
   client: ApiClient,
   publicUnknown: DeclaredDep[],
+  catalogGroups?: ReadonlySet<string>,
 ): Promise<DemandResponse> {
-  const coordinates = publicDemandCoordinates(publicUnknown.map((d) => `${d.group}:${d.artifact}`));
+  const coordinates = publicDemandCoordinates(
+    publicUnknown.map((d) => `${d.group}:${d.artifact}`),
+    catalogGroups,
+  );
   if (!coordinates.length) return { ok: true, accepted: 0, jobs: [] };
   const allowed = new Set(coordinates);
   const versions: Record<string, string> = {};

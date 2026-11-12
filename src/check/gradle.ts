@@ -9,6 +9,11 @@ export function isTestConfiguration(name: string): boolean {
   return /^test(?:[A-Z]|$)/.test(name) || /^androidTest/.test(name) || /^testFixtures/.test(name) || /Test(?:[A-Z]|$)/.test(name) || /TestFixtures/.test(name);
 }
 
+/** Annotation processor configurations: kapt, ksp, annotationProcessor and their variant forms. */
+export function isProcessorConfiguration(name: string): boolean {
+  return /^(?:kapt|ksp|annotationProcessor)/i.test(name) || /(?:Kapt|Ksp|AnnotationProcessor)$/.test(name);
+}
+
 /**
  * Well-known test frameworks. They never ship in a release build, so they are treated as
  * test-only even when a module declares them with a non-test configuration
@@ -34,7 +39,16 @@ export function isTestFrameworkCoordinate(group: string, artifact: string): bool
   if (g === "androidx.navigation" && a === "navigation-testing") return true;
   if (g === "org.jetbrains.kotlinx" && a.startsWith("kotlinx-coroutines-test")) return true;
   if (g === "org.jetbrains.kotlin" && (a === "kotlin-test" || a.startsWith("kotlin-test-"))) return true;
-  if (g === "com.squareup.okhttp3" && a === "mockwebserver") return true;
+  if (g === "com.squareup.okhttp3" && (a === "mockwebserver" || a === "mockwebserver3")) return true;
+  if (g === "com.google.dagger" && a === "hilt-android-testing") return true;
+  if (g === "androidx.benchmark") return true;
+  if (g === "io.kotest" || g.startsWith("io.kotest.")) return true;
+  if (g === "org.assertj") return true;
+  if (g === "app.cash.paparazzi") return true;
+  if (g === "io.github.takahirom.roborazzi") return true;
+  if (g === "org.spekframework" || g.startsWith("org.spekframework.")) return true;
+  // Generic test artifacts: hilt-android-testing, room-testing, ui-test-junit4, benchmark-macro-junit4, ...
+  if (/(?:^|-)(?:testing|test|tests|testutils|test-utils|junit|junit4|junit5)(?:-|$)/.test(a)) return true;
   return false;
 }
 
@@ -213,11 +227,19 @@ export function parseGradle(
   file: string,
   catalog?: VersionCatalog,
   extraVars: Record<string, string> = {},
-): { dependencies: DeclaredDep[]; boms: DeclaredDep[]; testDependencies: DeclaredDep[]; issues: string[] } {
+): {
+  dependencies: DeclaredDep[];
+  boms: DeclaredDep[];
+  testDependencies: DeclaredDep[];
+  /** kapt / ksp / annotationProcessor dependencies: run at compile time, never packaged. */
+  processorDependencies: DeclaredDep[];
+  issues: string[];
+} {
   const cleaned = stripLineComments(stripBlockComments(text));
   const vars = { ...collectVariables(cleaned), ...extraVars };
   const mainDeps: DeclaredDep[] = [];
   const testDeps: DeclaredDep[] = [];
+  const processorDeps: DeclaredDep[] = [];
   const boms: DeclaredDep[] = [];
   const testBoms: DeclaredDep[] = [];
   const issues: string[] = [];
@@ -226,13 +248,13 @@ export function parseGradle(
 
   // Walk dependency-like function calls. We scan for configuration names then parse the argument.
   // Also matches the Kotlin DSL string form: "testImplementation"("...")
-  const ident = /(?:^|[\s,{;"'])((?:[A-Za-z][\w]*)?(?:[Ii]mplementation|[Aa]pi|[Cc]ompileOnly(?:Api)?|[Rr]untimeOnly|[Cc]ompile|[Pp]rovided|[Kk]apt|[Kk]sp|[Aa]nnotationProcessor)(?:AndroidTest|Test)?)["']?\s*(\(|(?:\s+(?=["'lpg])))/g;
+  const ident = /(?:^|[\s,{;"'])((?:[A-Za-z][\w]*)?(?:[Ii]mplementation|[Aa]pi|[Cc]ompileOnly(?:Api)?|[Rr]untimeOnly|[Cc]ompile|[Pp]rovided|[Kk]apt|[Kk]sp|[Aa]nnotationProcessor)(?:AndroidTest|Test|Debug|Release)?)["']?\s*(\(|(?:\s+(?=["'lpg])))/g;
 
   let m: RegExpExecArray | null;
   while ((m = ident.exec(cleaned))) {
     const configuration = m[1];
     const isTest = isTestConfiguration(configuration);
-    const deps = isTest ? testDeps : mainDeps;
+    const deps = isTest ? testDeps : isProcessorConfiguration(configuration) ? processorDeps : mainDeps;
     const start = m.index + m[0].length - (m[2].startsWith("(") ? 1 : 0);
     // Grab a window of the argument
     const window = readArg(cleaned, start);
@@ -332,7 +354,7 @@ export function parseGradle(
     else dependencies.push(d);
   }
   for (const d of testDeps) d.testOnly = true;
-  return { dependencies, boms, testDependencies: testDeps, issues };
+  return { dependencies, boms, testDependencies: testDeps, processorDependencies: processorDeps, issues };
 }
 
 function parseMapForm(arg: string, vars: Record<string, string>): { group: string; artifact: string; version: string; versionSource: DeclaredDep["versionSource"] } | null {
