@@ -48,7 +48,7 @@ export type CliJson = {
     buildToolingIgnored: number;
     blocking: number;
   };
-  /** True while 16kb.dev is still checking at least one library. Re-run later for final counts. */
+  /** True while devbooth.dev is still checking at least one library. Re-run later for final counts. */
   settling: boolean;
   verdict: string;
   deadline: string;
@@ -111,7 +111,7 @@ export function rowsFromReport(report: CheckReport): CliRow[] {
     bom: r.declaredVersion ? undefined : publicBom(r.bom),
     status: toCliStatus(r.verdict),
     minVersion: r.entry?.minVersion || "—",
-    link: r.entry?.slug ? `https://16kb.dev/sdk/${r.entry.slug}` : "",
+    link: r.entry?.slug ? `https://devbooth.dev/16kb/sdk/${r.entry.slug}` : "",
     detail: r.detail,
     plugin: r.configuration === "plugin",
   }));

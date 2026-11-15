@@ -13,15 +13,15 @@ npx 16kb-check
 ```
 SDK                                     Version  Status     Link
 ──────────────────────────────────────  ───────  ─────────  ────
-io.sentry:sentry-android                7.14.0   not ready  https://16kb.dev/sdk/sentry-android
+io.sentry:sentry-android                7.14.0   not ready  https://devbooth.dev/16kb/sdk/sentry-android
     Min 16 KB version: 7.18.0
-com.mapbox.maps:android                 11.7.0   partial    https://16kb.dev/sdk/mapbox-maps-android
+com.mapbox.maps:android                 11.7.0   partial    https://devbooth.dev/16kb/sdk/mapbox-maps-android
     Min 16 KB version: 11.7.0 (-ndk27 artifacts)
-androidx.annotation:annotation          1.8.0    ready      https://16kb.dev/sdk/androidx-other-java
-androidx.core:core-ktx                  1.15.0   ready      https://16kb.dev/sdk/androidx-core-ui
-com.google.firebase:firebase-analytics  via BOM  ready      https://16kb.dev/sdk/firebase-android
-com.squareup.okhttp3:okhttp             4.12.0   ready      https://16kb.dev/sdk/okhttp
-com.squareup.okio:okio                  3.9.0    ready      https://16kb.dev/sdk/okhttp
+androidx.annotation:annotation          1.8.0    ready      https://devbooth.dev/16kb/sdk/androidx-other-java
+androidx.core:core-ktx                  1.15.0   ready      https://devbooth.dev/16kb/sdk/androidx-core-ui
+com.google.firebase:firebase-analytics  via BOM  ready      https://devbooth.dev/16kb/sdk/firebase-android
+com.squareup.okhttp3:okhttp             4.12.0   ready      https://devbooth.dev/16kb/sdk/okhttp
+com.squareup.okio:okio                  3.9.0    ready      https://devbooth.dev/16kb/sdk/okhttp
 
 "via BOM" means the version comes from this BOM: com.google.firebase:firebase-bom:33.7.0
 
@@ -43,7 +43,7 @@ This is a dependency-level check. Tip: verify the built APK with `zipalign -c -P
 Google Play: apps targeting Android 15 (API 35) or higher must support 16 KB page sizes on 64-bit devices. Starting Feb 1, 2027, updates that don't support 16 KB can't be released.
 ```
 
-This is the real output of `npx 16kb-check --path tests/fixtures/android-app --no-color` against the live 16kb.dev catalog. Your project will follow the same shape.
+This is the real output of `npx 16kb-check --path tests/fixtures/android-app --no-color` against the live catalog at https://devbooth.dev/api/catalog. Your project will follow the same shape.
 
 ## Usage
 
@@ -68,7 +68,7 @@ Requires Node 18 or newer.
 
 The CLI reads `settings.gradle` / `settings.gradle.kts`, every `build.gradle` / `build.gradle.kts`, and `gradle/libs.versions.toml` (plus other version catalogs in `gradle/`). It understands string coordinates, `group`/`name`/`version` maps, version catalog aliases, simple `${version}` variables, and `platform()` / BOM declarations. Test-only configurations, `project(...)` modules, and local `files()` / `fileTree()` artifacts are ignored.
 
-Results are looked up against the public catalog at [16kb.dev](https://16kb.dev). If a public SDK is not in the database yet, the CLI asks the site to start an automatic check and shows a `checking` status, subject to the site's daily rate limit.
+Results are looked up against the public catalog at [devbooth.dev](https://devbooth.dev/16kb). If a public SDK is not in the database yet, the CLI asks the site to start an automatic check and shows a `checking` status, subject to the site's daily rate limit.
 
 This report only sees dependencies you declared, not every transitive library Gradle would resolve.
 
@@ -82,7 +82,7 @@ This report only sees dependencies you declared, not every transitive library Gr
 
 ### Still checking
 
-When a public SDK is new to 16kb.dev, the site checks it in the background, so counts can change between back-to-back runs. The report says when results are still settling. Re-run in a few minutes. `--json` includes `checkedAt` (ISO timestamp) and `settling` (true while anything is still being checked).
+When a public SDK is new to the catalog, the site checks it in the background, so counts can change between back-to-back runs. The report says when results are still settling. Re-run in a few minutes. `--json` includes `checkedAt` (ISO timestamp) and `settling` (true while anything is still being checked).
 
 ### It's a dependency-level check
 
@@ -135,11 +135,11 @@ Private and internal SDKs are filtered out locally, before any network call. Tha
 - `project(...)` modules and local `files()` / `fileTree()` artifacts
 - Any group that is not on the known public Maven prefix list (AndroidX, Google, and other well-known public publishers)
 
-Private names are not printed in the table or the JSON output, and they are never sent to 16kb.dev. Only public `group:artifact` names are looked up. If a public SDK is not in the database yet and you declared a public version, that version may be sent so the site can check the published artifact. File contents are never sent.
+Private names are not printed in the table or the JSON output, and they are never sent to devbooth.dev. Only public `group:artifact` names are looked up. If a public SDK is not in the database yet and you declared a public version, that version may be sent so the site can check the published artifact. File contents are never sent.
 
 ## `--deep` (not implemented yet)
 
-A future `--deep` flag would download public AARs from Maven Central or Google Maven and inspect each `.so` file's `PT_LOAD` `p_align` on your machine, so the check can also run offline. That is still a TODO. Today the CLI uses the [16kb.dev](https://16kb.dev) catalog.
+A future `--deep` flag would download public AARs from Maven Central or Google Maven and inspect each `.so` file's `PT_LOAD` `p_align` on your machine, so the check can also run offline. That is still a TODO. Today the CLI uses the [devbooth.dev](https://devbooth.dev/16kb) catalog.
 
 ## Status values
 
@@ -148,11 +148,11 @@ A future `--deep` flag would download public AARs from Maven Central or Google M
 | ready      | Compatible with 16KB, including well-known JVM-only libraries with no native code |
 | not ready  | No compatible version, or the declared version is below the minimum 16KB-ready version |
 | partial    | Only partly compatible, or extra steps are documented (for example a special artifact) |
-| checking   | A public SDK we did not have yet; an automatic check is running on 16kb.dev |
+| checking   | A public SDK we did not have yet; an automatic check is running on devbooth.dev |
 | unknown    | Not in the database, or the declared version could not be compared |
 
-Each row links to `https://16kb.dev/sdk/<slug>` when the SDK is in the catalog.
+Each row links to `https://devbooth.dev/16kb/sdk/<slug>` when the SDK is in the catalog.
 
 ## License
 
-MIT. Built for [16kb.dev](https://16kb.dev).
+MIT. Built for [devbooth.dev](https://devbooth.dev/16kb).

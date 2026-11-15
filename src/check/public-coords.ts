@@ -10,7 +10,7 @@ import { CATALOG_GROUPS } from "./catalog-groups";
 const COORD = /^[A-Za-z0-9_.-]{1,80}:[A-Za-z0-9_.-]{1,80}$/;
 
 /**
- * Exact groups that the public 16kb.dev catalog lists. Bundled at build time, and the CLI
+ * Exact groups that the public devbooth.dev catalog lists. Bundled at build time, and the CLI
  * adds the groups from the catalog it downloads before any privacy decision. Exact match only:
  * a listed group never makes its sub-groups or sibling groups public.
  */
@@ -115,7 +115,7 @@ const PUBLIC_GROUP_PREFIXES = [
   "jakarta.inject",
   "junit",
   "io.adapty",
-  // Added after auditing every group in https://16kb.dev/api/catalog (Nov 2026).
+  // Added after auditing every group in https://devbooth.dev/api/catalog (Nov 2026).
   "com.arthenica",
   "com.auth0.android",
   "com.braintreepayments",
@@ -150,7 +150,7 @@ function isAlwaysPrivate(g: string): boolean {
 
 /**
  * JitPack-style, example, or any group not on the known-public prefix list and not an exact
- * group from the 16kb.dev catalog. `catalogGroups` are exact groups from a downloaded catalog.
+ * group from the devbooth.dev catalog. `catalogGroups` are exact groups from a downloaded catalog.
  */
 export function isPrivateOrInternalGroup(group: string, catalogGroups?: ReadonlySet<string>): boolean {
   const g = group.trim().toLowerCase();

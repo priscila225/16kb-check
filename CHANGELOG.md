@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Point the catalog fetch and printed SDK links at devbooth.dev (`https://devbooth.dev/api/catalog` and `https://devbooth.dev/16kb/sdk/<slug>`).
+
 ## 0.1.2
 
 - Public SDK groups that are listed in the 16kb.dev catalog (for example `org.pytorch`, `org.tensorflow`, `com.arthenica`) are now recognized as public. The CLI ships a list of the catalog's own groups and also reads groups from the catalog it downloads before it filters anything. Unknown and private coordinates are still never sent.

@@ -153,7 +153,7 @@ test("check-demand sends each coordinate with its own version", async () => {
 
 import { isCandidatePublicCoordinate, catalogGroupsFrom } from "../src/check/public-coords.ts";
 
-test("groups listed in the 16kb.dev catalog are public; unknown and private groups stay private", () => {
+test("groups listed in the devbooth.dev catalog are public; unknown and private groups stay private", () => {
   for (const c of ["org.pytorch:pytorch_android_lite", "org.tensorflow:tensorflow-lite", "com.arthenica:ffmpeg-kit-full"]) {
     assert.ok(isCandidatePublicCoordinate(c), c);
   }

@@ -2,7 +2,7 @@ import type { DeclaredDep } from "./check/types";
 import { isCandidatePublicCoordinate, isPrivateOrInternalGroup } from "./check/public-coords";
 
 export type PrivacySplit = {
-  /** Coordinates that may be looked up or sent to 16kb.dev. */
+  /** Coordinates that may be looked up or sent to devbooth.dev. */
   publicDeps: DeclaredDep[];
   /** How many declared libraries were dropped before any network call. */
   skippedPrivate: number;

@@ -2,8 +2,8 @@ import type { CatalogEntry, DeclaredDep } from "./check/types";
 import { publicDemandCoordinates } from "./check/public-coords";
 import { VERSION } from "./version";
 
-export const DEFAULT_API_BASE = "https://16kb.dev";
-export const USER_AGENT = `16kb-check/${VERSION} (+https://16kb.dev)`;
+export const DEFAULT_API_BASE = "https://devbooth.dev";
+export const USER_AGENT = `16kb-check/${VERSION} (+https://devbooth.dev/cli)`;
 
 const PUBLIC_VERSION = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$/;
 
@@ -45,7 +45,7 @@ export function createClient(opts?: { baseUrl?: string; fetch?: typeof fetch }):
 
 async function readJson(res: Response, what: string): Promise<unknown> {
   if (!res.ok) {
-    throw new Error(`16kb.dev ${what} failed (${res.status} ${res.statusText})`);
+    throw new Error(`devbooth.dev ${what} failed (${res.status} ${res.statusText})`);
   }
   return res.json();
 }
@@ -59,7 +59,7 @@ export async function fetchCatalog(client: ApiClient, opts: { fresh?: boolean } 
   });
   const data = (await readJson(res, "catalog")) as CatalogResponse;
   if (!data || !Array.isArray(data.entries)) {
-    throw new Error("16kb.dev catalog response was not recognized.");
+    throw new Error("devbooth.dev catalog response was not recognized.");
   }
   return data.entries.map((e) => ({
     slug: String(e.slug || ""),
@@ -73,7 +73,7 @@ export async function fetchCatalog(client: ApiClient, opts: { fresh?: boolean } 
 }
 
 /**
- * Ask 16kb.dev to auto-check public coordinates that are not in the catalog yet.
+ * Ask devbooth.dev to auto-check public coordinates that are not in the catalog yet.
  * Only public group:artifact names and public version strings are sent.
  * The caller must already have dropped private coordinates.
  */

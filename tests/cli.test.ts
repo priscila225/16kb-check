@@ -76,7 +76,7 @@ test("table output on the fixture includes expected statuses, links, and the dea
   assert.match(out, /7\.14\.0/);
   assert.match(out, /not ready/);
   assert.match(out, /Min 16 KB version: 7\.18\.0/);
-  assert.match(out, /https:\/\/16kb\.dev\/sdk\/sentry-android/);
+  assert.match(out, /https:\/\/devbooth\.dev\/16kb\/sdk\/sentry-android/);
   assert.match(out, /com\.mapbox\.maps:android/);
   assert.match(out, /partial/);
   assert.match(out, /okhttp/);
@@ -115,7 +115,7 @@ test("--json includes summary counts and no private names", async () => {
   const sentry = body.rows.find((r: { sdk: string }) => r.sdk === "io.sentry:sentry-android");
   assert.equal(sentry.status, "not ready");
   assert.equal(sentry.minVersion, "7.18.0");
-  assert.equal(sentry.link, "https://16kb.dev/sdk/sentry-android");
+  assert.equal(sentry.link, "https://devbooth.dev/16kb/sdk/sentry-android");
   assert.ok(!Number.isNaN(Date.parse(body.checkedAt)));
   assert.equal(body.settling, false);
   assert.equal(body.summary.testOnlyIgnored, 2);

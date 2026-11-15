@@ -28,11 +28,11 @@ Options:
 Privacy:
   Your Gradle and TOML files stay on this machine. Private and internal
   libraries (including com.github.* and JitPack) are filtered out locally
-  and are never sent to 16kb.dev. Only public Maven coordinates are looked
+  and are never sent to devbooth.dev. Only public Maven coordinates are looked
   up, and only public version strings are sent when a public SDK is not
   in the database yet.
 
-  https://16kb.dev
+  https://devbooth.dev/16kb
 `;
 
 export type CliOptions = {
@@ -103,7 +103,7 @@ export async function run(argv: string[], io: RunIo = { stdout: process.stdout, 
     return { exitCode: 0, skippedPrivate: 0 };
   }
   if (opts.deep) {
-    io.stderr.write("--deep is not implemented yet. Checking against the 16kb.dev catalog instead.\n");
+    io.stderr.write("--deep is not implemented yet. Checking against the devbooth.dev catalog instead.\n");
   }
 
   const discovered = discoverProject(resolve(opts.path));
@@ -124,7 +124,7 @@ export async function run(argv: string[], io: RunIo = { stdout: process.stdout, 
       catalog = await fetchCatalog(client);
     } catch (e) {
       io.stderr.write(
-        `Could not load the 16kb.dev catalog: ${e instanceof Error ? e.message : String(e)}\n` +
+        `Could not load the devbooth.dev catalog: ${e instanceof Error ? e.message : String(e)}\n` +
           "Check your network and try again.\n",
       );
       return { exitCode: 2, skippedPrivate: 0 };
