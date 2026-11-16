@@ -1,55 +1,12 @@
 {
-  "name": "16kb-check",
-  "version": "0.1.3",
-  "description": "Check an Android project for Google Play 16KB page-size compatibility.",
-  "keywords": [
-    "android",
-    "16kb",
-    "google-play",
-    "gradle",
-    "cli"
+  "name": "play-preflight-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/play-preflight",
+    "packages/16kb-check"
   ],
-  "homepage": "https://devbooth.dev/16kb",
-  "bugs": {
-    "url": "https://github.com/priscila225/16kb-check/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/priscila225/16kb-check.git"
-  },
-  "license": "MIT",
-  "author": "Priscila Apocalypse",
-  "bin": {
-    "16kb-check": "dist/cli.js"
-  },
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "require": "./dist/index.js",
-      "default": "./dist/index.js"
-    }
-  },
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE",
-    "CHANGELOG.md"
-  ],
-  "engines": {
-    "node": ">=18"
-  },
   "scripts": {
-    "build": "tsc",
-    "prepare": "tsc",
-    "prepublishOnly": "npm run build",
-    "test": "npm run build && tsx --test tests/*.test.ts",
-    "16kb-check": "node dist/cli.js"
-  },
-  "devDependencies": {
-    "@types/node": "^20",
-    "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "build": "npm run build -w play-preflight",
+    "test": "npm test -w play-preflight && npm test -w 16kb-check"
   }
 }

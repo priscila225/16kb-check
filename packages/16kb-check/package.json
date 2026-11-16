@@ -1,0 +1,40 @@
+{
+  "name": "16kb-check",
+  "version": "0.2.0",
+  "description": "Moved to play-preflight. This package runs `play-preflight 16kb` so existing scripts keep working.",
+  "keywords": [
+    "android",
+    "16kb",
+    "google-play",
+    "play-preflight"
+  ],
+  "homepage": "https://devbooth.dev/cli",
+  "bugs": {
+    "url": "https://github.com/priscila225/16kb-check/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/priscila225/16kb-check.git",
+    "directory": "packages/16kb-check"
+  },
+  "license": "MIT",
+  "author": "Priscila Apocalypse",
+  "bin": {
+    "16kb-check": "cli.js"
+  },
+  "files": [
+    "cli.js",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "play-preflight": "^1.0.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

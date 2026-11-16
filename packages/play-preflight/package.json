@@ -1,0 +1,62 @@
+{
+  "name": "play-preflight",
+  "version": "1.0.0",
+  "description": "Check an Android app against Google Play's current rules before you ship: target API, 16 KB pages, Play Billing, foreground services, edge to edge, large screens, predictive back and restricted permissions. Runs locally.",
+  "keywords": [
+    "android",
+    "google-play",
+    "preflight",
+    "target-sdk",
+    "16kb",
+    "play-billing",
+    "gradle",
+    "apk",
+    "aab",
+    "cli"
+  ],
+  "homepage": "https://devbooth.dev/cli",
+  "bugs": {
+    "url": "https://github.com/priscila225/16kb-check/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/priscila225/16kb-check.git",
+    "directory": "packages/play-preflight"
+  },
+  "license": "MIT",
+  "author": "Priscila Apocalypse",
+  "bin": {
+    "play-preflight": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "prepublishOnly": "npm test",
+    "test": "npm run build && tsx --test tests/16kb/*.test.ts tests/*.test.ts",
+    "play-preflight": "node dist/cli.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

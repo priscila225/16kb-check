@@ -1,0 +1,550 @@
+import type { CheckReport, DeclaredDep } from "../sixteenkb/check/types";
+import type { AgpCheck } from "../sixteenkb/check/agp";
+import type { BinaryScan } from "./binary";
+import { hasPermission, isFalse, isTrue, type ManifestInfo } from "./manifest";
+import type { TextFile } from "./targetsdk";
+import { DATES, PLAY_MIN_TARGET, RULES, fmtDate, type CheckId, type FormFactor } from "./rules";
+
+export type CheckStatus = "pass" | "warn" | "fail" | "skip" | "info";
+
+export type CheckResult = {
+  id: CheckId;
+  status: CheckStatus;
+  title: string;
+  detail: string;
+  /** ISO date of the relevant Play deadline, when there is one. */
+  deadline: string | null;
+  source: string;
+  link: string;
+  items: string[];
+};
+
+export type SdkLookup =
+  | { status: "ok"; report: CheckReport; skippedPrivate: number }
+  | { status: "offline" }
+  | { status: "error"; message: string }
+  | { status: "none" };
+
+export type CheckContext = {
+  target: {
+    value?: number;
+    from?: string;
+    expr?: string;
+    /** The level other checks evaluate against: the real one, or Play's minimum when unknown. */
+    effective: number;
+    assumed: boolean;
+    formFactor: FormFactor;
+    required: number;
+  };
+  manifest?: ManifestInfo;
+  manifestKind: "apk" | "merged" | "source" | "none";
+  dependencies?: DeclaredDep[];
+  billingMentionedIn?: string;
+  edgeToEdgeOptOuts?: { file: string; value: string }[];
+  sources?: () => TextFile[];
+  binary?: BinaryScan;
+  sdk: SdkLookup;
+  agp?: AgpCheck;
+};
+
+function result(id: CheckId, status: CheckStatus, detail: string, items: string[] = [], deadline: string | null = null): CheckResult {
+  const r = RULES[id];
+  return { id, status, title: r.title, detail, deadline, source: r.source, link: r.link, items };
+}
+
+const RANK: Record<CheckStatus, number> = { skip: 0, info: 1, pass: 2, warn: 3, fail: 4 };
+
+function worst(statuses: CheckStatus[]): CheckStatus {
+  return statuses.reduce<CheckStatus>((a, b) => (RANK[b] > RANK[a] ? b : a), "skip");
+}
+
+function short(name: string): string {
+  return name.replace(/^android\.permission\./, "");
+}
+
+function cap(list: string[], n = 8): string[] {
+  return list.length > n ? [...list.slice(0, n), `…and ${list.length - n} more`] : list;
+}
+
+function assumedNote(ctx: CheckContext): string {
+  return ctx.target.assumed ? ` (targetSdk unknown, assumed ${ctx.target.effective})` : "";
+}
+
+const NO_MANIFEST = "no AndroidManifest.xml found (pass --apk, or run in the project folder)";
+
+export function detectFormFactor(m?: ManifestInfo): FormFactor {
+  const f = new Set(m?.features ?? []);
+  if (f.has("android.hardware.type.watch")) return "wear";
+  if (f.has("android.hardware.type.automotive")) return "automotive";
+  if (f.has("android.software.leanback")) return "tv";
+  return "phone";
+}
+
+// A. Target API level
+export function checkTargetApi(ctx: CheckContext): CheckResult {
+  const { value, required, formFactor, from, expr } = ctx.target;
+  const kind = formFactor === "phone" ? "" : ` for ${formFactor === "tv" ? "TV" : formFactor === "wear" ? "Wear OS" : "Automotive"} apps`;
+  if (value === undefined) {
+    const where = expr ? ` (set as \`${expr}\` in ${from})` : "";
+    return result("target-api", "skip", `couldn't resolve targetSdk${where}. Pass --target-sdk <n>, build once, or use --apk`, [], DATES.targetApi36);
+  }
+  const next = value < 37 ? ["Next: API 37. Google hasn't announced that date yet."] : [];
+  if (value >= required) {
+    return result("target-api", "pass", `targets ${value}. Play needs ${required}${kind} for new apps and updates since ${fmtDate(DATES.targetApi36)}`, next, DATES.targetApi36);
+  }
+  const items: string[] = [];
+  if (formFactor === "phone" && value < 35) items.push("Below API 35, existing apps stop showing to new users on newer Android versions.");
+  items.push(`The extension ran until ${fmtDate(DATES.targetApi36Extension)}, so the rule is fully in force.`);
+  return result(
+    "target-api",
+    "fail",
+    `targets ${value}, Play needs ${required}${kind} for new apps and updates since ${fmtDate(DATES.targetApi36)}`,
+    items,
+    DATES.targetApi36,
+  );
+}
+
+const BLOCKING = new Set(["not-yet", "partial", "update-needed"]);
+
+// B. 16 KB page size
+export function check16kb(ctx: CheckContext): CheckResult {
+  const parts: { status: CheckStatus; text: string }[] = [];
+  const items: string[] = [];
+  const when = `Play blocks updates that aren't ready from ${fmtDate(DATES.sixteenKbBlock)}`;
+  const say = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+  if (ctx.binary) {
+    const libs = ctx.binary.nativeLibs;
+    const bad = libs.filter((l) => !l.error && !l.elfAligned);
+    const zipBad = libs.filter((l) => l.zipMisaligned);
+    const unreadable = libs.filter((l) => l.error);
+    if (!libs.length) parts.push({ status: "pass", text: `no 64-bit native libraries in the ${ctx.binary.kind.toUpperCase()}` });
+    if (bad.length) {
+      parts.push({ status: "fail", text: `${say(bad.length, "native library isn't", "native libraries aren't")} 16 KB aligned` });
+      for (const l of bad) items.push(`${l.path}: LOAD alignment 0x${l.align.toString(16)} (needs 0x4000)`);
+    }
+    if (zipBad.length) {
+      parts.push({ status: "fail", text: `${say(zipBad.length, "uncompressed .so isn't", "uncompressed .so files aren't")} zip-aligned to 16 KB` });
+      for (const l of zipBad) items.push(`${l.path}: not on a 16 KB boundary in the APK (use AGP 8.5.1+ or zipalign -P 16)`);
+    }
+    if (unreadable.length) {
+      parts.push({ status: "warn", text: `${unreadable.length} .so ${unreadable.length === 1 ? "file" : "files"} couldn't be read` });
+      for (const l of unreadable) items.push(`${l.path}: ${l.error}`);
+    }
+    if (libs.length && !bad.length && !zipBad.length && !unreadable.length) {
+      parts.push({ status: "pass", text: `all ${libs.length} 64-bit native libraries are 16 KB aligned` });
+    }
+  }
+
+  if (ctx.manifest && ctx.manifest.application["android:pageSizeCompat"] !== undefined) {
+    parts.push({ status: "warn", text: "android:pageSizeCompat is set" });
+    items.push("pageSizeCompat only turns on compatibility mode. It hides the warning but doesn't make the libraries 16 KB ready.");
+  }
+
+  const sdk = ctx.sdk;
+  if (sdk.status === "ok") {
+    const rows = sdk.report.rows.filter((r) => r.configuration !== "plugin");
+    const blocking = rows.filter((r) => BLOCKING.has(r.verdict));
+    const unknown = rows.filter((r) => r.verdict === "unknown" || r.verdict === "checking").length;
+    if (blocking.length) {
+      parts.push({ status: "warn", text: `${say(blocking.length, "SDK", "SDKs")} not ready` });
+      for (const r of blocking) {
+        const min = r.entry?.minVersion ? `, 16 KB from ${r.entry.minVersion}` : "";
+        items.push(`${r.coordinate} ${r.declaredVersion || "(version not resolved)"}${min}`);
+      }
+      items.push("Run `npx play-preflight 16kb` for the full SDK table.");
+    } else if (rows.length) {
+      parts.push({ status: "pass", text: `${rows.length} public SDKs checked, none blocking${unknown ? ` (${unknown} unknown)` : ""}` });
+    }
+  } else if (sdk.status === "offline") {
+    items.push("SDK lookup skipped (--offline).");
+  } else if (sdk.status === "error") {
+    items.push(`SDK lookup failed: ${sdk.message}`);
+  }
+
+  if (ctx.agp?.status === "warning" && !ctx.binary) {
+    parts.push({ status: "warn", text: `AGP ${ctx.agp.version} is below 8.5.1` });
+    items.push(ctx.agp.message);
+  }
+
+  if (!parts.length) {
+    const why =
+      sdk.status === "offline"
+        ? "offline and no APK/AAB given, so nothing to check. Pass --apk or --aab to check the native libraries"
+        : sdk.status === "error"
+          ? "couldn't reach the SDK catalog and no APK/AAB given"
+          : "no dependencies or native libraries found";
+    return result("16kb", "skip", why, items, DATES.sixteenKbBlock);
+  }
+  const status = worst(parts.map((p) => p.status));
+  const lead = parts.filter((p) => p.status === status).map((p) => p.text);
+  const rest = parts.filter((p) => p.status !== status).map((p) => p.text);
+  const detail = lead.join("; ") + (status === "fail" || status === "warn" ? `. ${when}` : "");
+  return result("16kb", status, detail, [...rest, ...items], DATES.sixteenKbBlock);
+}
+
+// J. Play Billing Library
+const BILLING_ARTIFACTS = new Set(["billing", "billing-ktx"]);
+
+export function checkBilling(ctx: CheckContext): CheckResult {
+  let version: string | undefined;
+  let from = "";
+  let found = false;
+  const dep = (ctx.dependencies ?? []).find((d) => d.group === "com.android.billingclient" && BILLING_ARTIFACTS.has(d.artifact));
+  const meta = ctx.manifest?.appMetaData["com.google.android.play.billingclient.version"];
+  if (meta) {
+    found = true;
+    version = meta;
+    from = "APK manifest";
+  } else if (dep) {
+    found = true;
+    version = dep.version || undefined;
+    from = `${dep.group}:${dep.artifact}`;
+  }
+  if (!found && ctx.billingMentionedIn) {
+    return result("play-billing", "warn", `${ctx.billingMentionedIn} mentions the Play Billing Library, but its version couldn't be resolved`, [
+      `Make sure it's 8 or later. Version 8 is supported until ${fmtDate(DATES.billing8Cutoff)}.`,
+    ]);
+  }
+  if (!found) return result("play-billing", "skip", "Play Billing Library not used");
+  const major = version ? Number.parseInt(/^\s*(\d+)/.exec(version)?.[1] ?? "", 10) : Number.NaN;
+  if (!Number.isFinite(major)) {
+    return result("play-billing", "warn", `found ${from}, but couldn't resolve its version${version ? ` ("${version}")` : ""}`, [
+      `Make sure it's 8 or later. Version 8 is supported until ${fmtDate(DATES.billing8Cutoff)}.`,
+    ]);
+  }
+  if (major <= 7) {
+    return result(
+      "play-billing",
+      "fail",
+      `${version}: the cutoff for version 7 and older was ${fmtDate(DATES.billing7Cutoff)} (extension ${fmtDate(DATES.billing7Extension)}). Update to 8 or later`,
+      [`From ${from}.`],
+      DATES.billing7Cutoff,
+    );
+  }
+  if (major === 8) {
+    return result(
+      "play-billing",
+      "warn",
+      `${version} is supported until ${fmtDate(DATES.billing8Cutoff)} (extension to ${fmtDate(DATES.billing8Extension)}). Plan the move to 9`,
+      [`From ${from}.`],
+      DATES.billing8Cutoff,
+    );
+  }
+  const until = major === 9 ? ` (supported until ${fmtDate(DATES.billing9Cutoff)})` : "";
+  return result("play-billing", "pass", `${version}${until}`, [], major === 9 ? DATES.billing9Cutoff : null);
+}
+
+// F. Foreground service types
+const FGS_TYPE_PERMISSION: Record<string, string | null> = {
+  camera: "FOREGROUND_SERVICE_CAMERA",
+  connectedDevice: "FOREGROUND_SERVICE_CONNECTED_DEVICE",
+  dataSync: "FOREGROUND_SERVICE_DATA_SYNC",
+  health: "FOREGROUND_SERVICE_HEALTH",
+  location: "FOREGROUND_SERVICE_LOCATION",
+  mediaPlayback: "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+  mediaProcessing: "FOREGROUND_SERVICE_MEDIA_PROCESSING",
+  mediaProjection: "FOREGROUND_SERVICE_MEDIA_PROJECTION",
+  microphone: "FOREGROUND_SERVICE_MICROPHONE",
+  phoneCall: "FOREGROUND_SERVICE_PHONE_CALL",
+  remoteMessaging: "FOREGROUND_SERVICE_REMOTE_MESSAGING",
+  specialUse: "FOREGROUND_SERVICE_SPECIAL_USE",
+  systemExempted: "FOREGROUND_SERVICE_SYSTEM_EXEMPTED",
+  shortService: null,
+  fileManagement: null,
+  manifest: null,
+  none: null,
+};
+
+export function checkForegroundServices(ctx: CheckContext): CheckResult {
+  const m = ctx.manifest;
+  if (!m) return result("foreground-services", "skip", NO_MANIFEST);
+  const fgsPerm = !!hasPermission(m, "FOREGROUND_SERVICE");
+  const typed = m.services.filter((s) => (s.attrs["android:foregroundServiceType"] ?? "").trim());
+  const untyped = m.services.filter((s) => !(s.attrs["android:foregroundServiceType"] ?? "").trim());
+  if (!fgsPerm && !typed.length) return result("foreground-services", "skip", "none declared");
+  const t = ctx.target.effective;
+  if (t < 34) {
+    return result("foreground-services", "pass", `types are required once you target 34 (you target ${t})`, typed.map((s) => `${s.name}: ${s.attrs["android:foregroundServiceType"]}`));
+  }
+
+  const fails: string[] = [];
+  const warns: string[] = [];
+  const info: string[] = [];
+  const allTypes = new Set<string>();
+  if (fgsPerm && !typed.length) {
+    fails.push("FOREGROUND_SERVICE is declared but no <service> has android:foregroundServiceType. startForeground() throws MissingForegroundServiceTypeException");
+  }
+  if (!fgsPerm && typed.length) fails.push("services declare a foregroundServiceType but FOREGROUND_SERVICE isn't declared");
+  for (const s of typed) {
+    const types = s.attrs["android:foregroundServiceType"].split("|").map((x) => x.trim()).filter(Boolean);
+    for (const type of types) {
+      allTypes.add(type);
+      const perm = FGS_TYPE_PERMISSION[type];
+      if (perm === undefined) {
+        warns.push(`${s.name}: unknown type "${type}"`);
+        continue;
+      }
+      if (perm && !hasPermission(m, perm)) fails.push(`${s.name}: type ${type} needs ${perm}, which isn't declared (SecurityException at runtime)`);
+      if (type === "specialUse" && !s.properties["android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"]) {
+        fails.push(`${s.name}: specialUse needs a <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE">`);
+      }
+      if ((type === "dataSync" || type === "mediaProcessing") && t >= 35) {
+        warns.push(`${s.name}: ${type} has a 6 h per 24 h time limit on Android 15+ when you target 35+`);
+      }
+      if (type === "systemExempted") warns.push(`${s.name}: systemExempted is only allowed for specific kinds of apps`);
+    }
+  }
+  if (fgsPerm && typed.length && untyped.length) {
+    info.push(`${untyped.length} other ${untyped.length === 1 ? "service has" : "services have"} no type. Any that call startForeground() need one.`);
+  }
+  if (allTypes.size) info.push(`Declare these types in Play Console (App content > Foreground services): ${[...allTypes].join(", ")}`);
+  if (ctx.manifestKind === "source") info.push("Libraries can add services at build time. Build once or pass --apk to see them.");
+
+  if (fails.length) return result("foreground-services", "fail", fails[0], [...fails.slice(1), ...warns, ...info]);
+  if (warns.length) return result("foreground-services", "warn", warns[0], [...warns.slice(1), ...info]);
+  return result("foreground-services", "pass", `${typed.length} typed ${typed.length === 1 ? "service" : "services"}, permissions in place${assumedNote(ctx)}`, info);
+}
+
+// C. Edge to edge
+export function checkEdgeToEdge(ctx: CheckContext): CheckResult {
+  if (!ctx.edgeToEdgeOptOuts) return result("edge-to-edge", "skip", "theme flags need the project folder (APK resources aren't read)");
+  const optOuts = ctx.edgeToEdgeOptOuts.filter((o) => isTrue(o.value));
+  const t = ctx.target.effective;
+  if (!optOuts.length) {
+    return result("edge-to-edge", "pass", "no windowOptOutEdgeToEdgeEnforcement opt-out found", [
+      "Apps targeting 35+ draw edge to edge on Android 15+. Check your insets on a real device.",
+    ]);
+  }
+  const files = optOuts.map((o) => o.file);
+  if (t >= 36) {
+    return result("edge-to-edge", "fail", `windowOptOutEdgeToEdgeEnforcement is ignored on Android 16 when you target 36${assumedNote(ctx)}. Handle insets instead`, files);
+  }
+  return result(
+    "edge-to-edge",
+    "warn",
+    `windowOptOutEdgeToEdgeEnforcement stops working when you target 36, which Play requires for updates`,
+    files,
+  );
+}
+
+// D. Large screens
+const LOCKED_ORIENTATIONS = new Set([
+  "portrait",
+  "landscape",
+  "reversePortrait",
+  "reverseLandscape",
+  "sensorPortrait",
+  "sensorLandscape",
+  "userPortrait",
+  "userLandscape",
+  "nosensor",
+  "locked",
+]);
+const RESIZABILITY_OPT_OUT = "android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY";
+
+export function checkLargeScreens(ctx: CheckContext): CheckResult {
+  const m = ctx.manifest;
+  if (!m) return result("large-screens", "skip", NO_MANIFEST);
+  if ((m.application["android:appCategory"] ?? "").trim() === "game") return result("large-screens", "skip", "games are exempt (appCategory=game)");
+  const items: string[] = [];
+  const appNotResizable = isFalse(m.application["android:resizeableActivity"]);
+  if (appNotResizable) items.push('<application android:resizeableActivity="false">');
+  for (const a of m.activities) {
+    const bits: string[] = [];
+    const o = (a.attrs["android:screenOrientation"] ?? "").trim();
+    if (LOCKED_ORIENTATIONS.has(o)) bits.push(`screenOrientation=${o}`);
+    if (isFalse(a.attrs["android:resizeableActivity"])) bits.push("resizeableActivity=false");
+    if (a.attrs["android:minAspectRatio"]) bits.push(`minAspectRatio=${a.attrs["android:minAspectRatio"]}`);
+    if (a.attrs["android:maxAspectRatio"]) bits.push(`maxAspectRatio=${a.attrs["android:maxAspectRatio"]}`);
+    if (bits.length) items.push(`${a.name}: ${bits.join(", ")}`);
+  }
+  const optOut =
+    isTrue(m.appProperties[RESIZABILITY_OPT_OUT]) || m.activities.some((a) => isTrue(a.properties[RESIZABILITY_OPT_OUT]));
+  const t = ctx.target.effective;
+  if (!items.length && !optOut) return result("large-screens", "pass", "no orientation, resizability or aspect ratio locks");
+  const n = items.length - (appNotResizable ? 1 : 0);
+  const lockText = n > 0 ? `${n} ${n === 1 ? "activity locks" : "activities lock"} orientation or size` : "the app locks resizing";
+  const out = cap(items);
+  if (optOut) out.push(`${RESIZABILITY_OPT_OUT} is set. It's temporary and stops working at API 37.`);
+  if (!items.length) return result("large-screens", "warn", "uses the temporary resizability opt-out, which is gone at API 37", out);
+  const detail =
+    t >= 36
+      ? `${lockText}. Android 16 ignores this on screens 600dp and wider when you target 36${assumedNote(ctx)}`
+      : `${lockText}. It will be ignored on screens 600dp and wider once you target 36`;
+  return result("large-screens", "warn", detail, out);
+}
+
+// E. Predictive back
+const BACK_PATTERNS: [RegExp, string][] = [
+  [/\boverride\s+fun\s+onBackPressed\s*\(/, "overrides onBackPressed()"],
+  [/\bvoid\s+onBackPressed\s*\(\s*\)/, "overrides onBackPressed()"],
+  [/\bKEYCODE_BACK\b/, "handles KEYCODE_BACK"],
+];
+
+export function checkPredictiveBack(ctx: CheckContext): CheckResult {
+  const m = ctx.manifest;
+  const optedOut = m
+    ? [m.application, ...m.activities.map((a) => a.attrs)].some((a) => isFalse(a["android:enableOnBackInvokedCallback"]))
+    : false;
+  const t = ctx.target.effective;
+  if (optedOut) {
+    return result("predictive-back", "info", 'opted out with enableOnBackInvokedCallback="false". This is temporary, so plan the move to OnBackPressedCallback');
+  }
+  if (!ctx.sources) {
+    if (!m) return result("predictive-back", "skip", NO_MANIFEST);
+    return result("predictive-back", "skip", "needs the project folder to look for onBackPressed() and KEYCODE_BACK");
+  }
+  const hits: string[] = [];
+  for (const f of ctx.sources()) {
+    for (const [re, what] of BACK_PATTERNS) {
+      if (re.test(f.text)) {
+        hits.push(`${f.name}: ${what}`);
+        break;
+      }
+    }
+  }
+  if (!hits.length) return result("predictive-back", "pass", "no onBackPressed() overrides or KEYCODE_BACK handling found");
+  if (t >= 36) {
+    return result(
+      "predictive-back",
+      "warn",
+      `${hits.length} ${hits.length === 1 ? "file uses" : "files use"} the old back APIs. On Android 16 with target 36 they aren't called${assumedNote(ctx)}`,
+      [...cap(hits), "Move to OnBackPressedCallback (androidx.activity) or OnBackInvokedCallback."],
+    );
+  }
+  return result("predictive-back", "warn", `${hits.length} ${hits.length === 1 ? "file uses" : "files use"} the old back APIs, which stop being called once you target 36`, cap(hits));
+}
+
+function sourceManifestNote(ctx: CheckContext): string[] {
+  return ctx.manifestKind === "source" ? ["Read from source manifests. Libraries can add permissions at build time, so build once or pass --apk."] : [];
+}
+
+// H. Photo and video permissions
+export function checkPhotoVideo(ctx: CheckContext): CheckResult {
+  const m = ctx.manifest;
+  if (!m) return result("photo-video", "skip", NO_MANIFEST);
+  const found: string[] = [];
+  for (const p of ["READ_MEDIA_IMAGES", "READ_MEDIA_VIDEO", "MANAGE_EXTERNAL_STORAGE"]) {
+    if (hasPermission(m, p)) found.push(p);
+  }
+  const legacy = hasPermission(m, "READ_EXTERNAL_STORAGE");
+  const items: string[] = [];
+  if (legacy && !(legacy.maxSdk !== undefined && legacy.maxSdk <= 32)) {
+    found.push("READ_EXTERNAL_STORAGE");
+    items.push('READ_EXTERNAL_STORAGE has no android:maxSdkVersion="32". On Android 13+ use READ_MEDIA_* or the photo picker.');
+  }
+  if (!found.length) return result("photo-video", "pass", "no broad photo, video or storage permissions", sourceManifestNote(ctx));
+  if (found.includes("READ_MEDIA_IMAGES") || found.includes("READ_MEDIA_VIDEO")) {
+    items.unshift("Use the photo picker (androidx.activity 1.7.0+) unless the app's core use needs broad access.");
+  }
+  if (found.includes("MANAGE_EXTERNAL_STORAGE")) items.push("MANAGE_EXTERNAL_STORAGE (All files access) needs a Play Console declaration and a qualifying use.");
+  return result("photo-video", "warn", `${found.join(", ")} declared. Needs a Play Console declaration or the photo picker`, [...items, ...sourceManifestNote(ctx)]);
+}
+
+// G. Exact alarms
+export function checkExactAlarms(ctx: CheckContext): CheckResult {
+  const m = ctx.manifest;
+  if (!m) return result("exact-alarms", "skip", NO_MANIFEST);
+  const use = hasPermission(m, "USE_EXACT_ALARM");
+  const schedule = hasPermission(m, "SCHEDULE_EXACT_ALARM");
+  if (!use && !schedule) return result("exact-alarms", "pass", "no exact alarm permissions", sourceManifestNote(ctx));
+  const warns: string[] = [];
+  const items: string[] = [];
+  if (use) warns.push("USE_EXACT_ALARM declared. Play only allows it for alarm, timer and calendar apps");
+  if (schedule) {
+    const checks = ctx.sources?.().some((f) => f.text.includes("canScheduleExactAlarms("));
+    if (checks) items.push("SCHEDULE_EXACT_ALARM: canScheduleExactAlarms() is called. Good.");
+    else {
+      warns.push("SCHEDULE_EXACT_ALARM is denied by default on Android 14+ for new installs");
+      items.push(ctx.sources ? "No canScheduleExactAlarms() call found. Check it before scheduling." : "Make sure the app checks canScheduleExactAlarms() before scheduling.");
+    }
+  }
+  if (!warns.length) return result("exact-alarms", "pass", "SCHEDULE_EXACT_ALARM with a canScheduleExactAlarms() check", []);
+  return result("exact-alarms", "warn", warns[0], [...warns.slice(1), ...items]);
+}
+
+// I. Other restricted permissions
+const SMS = ["SEND_SMS", "RECEIVE_SMS", "READ_SMS", "RECEIVE_WAP_PUSH", "RECEIVE_MMS", "WRITE_SMS", "READ_CELL_BROADCASTS"];
+const CALL_LOG = ["READ_CALL_LOG", "WRITE_CALL_LOG", "PROCESS_OUTGOING_CALLS"];
+
+export function checkRestrictedPermissions(ctx: CheckContext): CheckResult {
+  const m = ctx.manifest;
+  if (!m) return result("restricted-permissions", "skip", NO_MANIFEST);
+  const t = ctx.target.effective;
+  const items: string[] = [];
+  const names: string[] = [];
+  const deadlines: string[] = [];
+  const add = (perm: string, why: string, deadline?: string) => {
+    names.push(perm);
+    items.push(`${perm}: ${why}`);
+    if (deadline) deadlines.push(deadline);
+  };
+  if (hasPermission(m, "QUERY_ALL_PACKAGES") && t >= 30) add("QUERY_ALL_PACKAGES", "needs a declaration and a core use that requires it. Prefer <queries>");
+  if (hasPermission(m, "REQUEST_INSTALL_PACKAGES")) add("REQUEST_INSTALL_PACKAGES", "needs a declaration and a core use that requires it");
+  const sms = SMS.filter((p) => hasPermission(m, p));
+  if (sms.length) add(sms.join(", "), "SMS permissions are only for the default SMS handler (or an approved exception)");
+  const calls = CALL_LOG.filter((p) => hasPermission(m, p));
+  if (calls.length) add(calls.join(", "), "Call Log permissions are only for the default phone handler (or an approved exception)");
+  if (hasPermission(m, "ACCESS_BACKGROUND_LOCATION")) add("ACCESS_BACKGROUND_LOCATION", "needs a Play Console declaration and review");
+  if (hasPermission(m, "USE_FULL_SCREEN_INTENT") && t >= 34) add("USE_FULL_SCREEN_INTENT", "only auto-granted for alarm and calling apps; others need a declaration");
+  if (t >= 37) {
+    if (hasPermission(m, "ACCESS_FINE_LOCATION")) {
+      add("ACCESS_FINE_LOCATION", `at target 37+ needs a declaration from ${fmtDate(DATES.permissionsApi37)}. Use the location button for one-off location`, DATES.permissionsApi37);
+    }
+    if (hasPermission(m, "READ_CONTACTS")) add("READ_CONTACTS", `at target 37+ needs a declaration from ${fmtDate(DATES.permissionsApi37)}, or use the Contact Picker`, DATES.permissionsApi37);
+    if (hasPermission(m, "ACCESS_LOCAL_NETWORK")) add("ACCESS_LOCAL_NETWORK", `at target 37+ needs a declaration from ${fmtDate(DATES.localNetworkApi37)}`, DATES.localNetworkApi37);
+  }
+  if (!names.length) return result("restricted-permissions", "pass", "no restricted permissions that need a declaration", sourceManifestNote(ctx));
+  deadlines.sort();
+  return result(
+    "restricted-permissions",
+    "warn",
+    `${names.length} restricted ${names.length === 1 ? "permission needs" : "permissions need"} a Play Console declaration or a qualifying use`,
+    [...items, ...sourceManifestNote(ctx)],
+    deadlines[0] ?? null,
+  );
+}
+
+// L. Account deletion reminder
+const AUTH_SDKS: [string, RegExp][] = [
+  ["Firebase Auth", /^com\.google\.firebase:firebase-auth(-ktx)?$/],
+  ["Auth0", /^com\.auth0\.android:/],
+  ["Supabase Auth", /^io\.github\.jan-tennert\.supabase:(auth-kt|gotrue-kt)$/],
+  ["Amplify Auth", /^com\.amplifyframework:aws-auth-cognito$/],
+  ["Okta", /^com\.okta\.(android|kotlin):/],
+  ["AppAuth", /^net\.openid:appauth$/],
+  ["Credential Manager", /^androidx\.credentials:credentials$/],
+  ["Google Sign-In", /^com\.google\.android\.gms:play-services-auth$/],
+  ["Facebook Login", /^com\.facebook\.android:facebook-login$/],
+  ["Clerk", /^com\.clerk:/],
+];
+
+export function checkAccountDeletion(ctx: CheckContext): CheckResult {
+  if (!ctx.dependencies) return result("account-deletion", "skip", "needs the project folder to look for sign-in SDKs");
+  const found = new Set<string>();
+  for (const d of ctx.dependencies) {
+    const c = `${d.group}:${d.artifact}`;
+    for (const [label, re] of AUTH_SDKS) if (re.test(c)) found.add(label);
+  }
+  if (!found.size) return result("account-deletion", "skip", "no sign-in SDK found");
+  return result("account-deletion", "info", `sign-in SDK found (${[...found].join(", ")}). Make sure in-app and web account deletion exist`, [
+    "If users can create accounts, Play needs an in-app way to delete the account and a web link in the Data safety form.",
+  ]);
+}
+
+export const CHECKS: Record<CheckId, (ctx: CheckContext) => CheckResult> = {
+  "target-api": checkTargetApi,
+  "16kb": check16kb,
+  "play-billing": checkBilling,
+  "foreground-services": checkForegroundServices,
+  "edge-to-edge": checkEdgeToEdge,
+  "large-screens": checkLargeScreens,
+  "predictive-back": checkPredictiveBack,
+  "photo-video": checkPhotoVideo,
+  "exact-alarms": checkExactAlarms,
+  "restricted-permissions": checkRestrictedPermissions,
+  "account-deletion": checkAccountDeletion,
+};
+
+export { PLAY_MIN_TARGET, short };

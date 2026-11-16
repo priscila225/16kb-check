@@ -1,0 +1,19 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace 'dev.example.legacy'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'dev.example.legacy'
+        minSdkVersion 23
+        targetSdkVersion rootProject.ext.targetSdkVersion
+    }
+}
+
+dependencies {
+    implementation project(':feature')
+    implementation "com.android.billingclient:billing:7.1.1"
+    implementation 'com.google.firebase:firebase-auth:23.1.0'
+    implementation 'io.sentry:sentry-android:7.14.0'
+    implementation 'com.github.acme-internal:secret-kit:1.0.0'
+}

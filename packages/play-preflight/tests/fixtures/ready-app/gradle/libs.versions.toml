@@ -1,0 +1,14 @@
+[versions]
+agp = "8.7.3"
+kotlin = "2.0.21"
+targetSdk = "36"
+billing = "9.0.0"
+coreKtx = "1.15.0"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+billing-ktx = { module = "com.android.billingclient:billing-ktx", version.ref = "billing" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
