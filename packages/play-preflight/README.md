@@ -128,7 +128,7 @@ npx play-preflight 16kb
 | `--aab <file>` | Read the `.so` files from an AAB. Manifest checks use the project folder |
 | `--module <name>` | App module to check when there are several (default: `app`) |
 | `--target-sdk <n>` | Use this targetSdk when it can't be resolved from Gradle |
-| `--json` | JSON with `{ id, status, title, detail, deadline, source, link, items }` per check |
+| `--json` | JSON with `{ id, status, title, detail, deadline, source, link, items }` per check. The `16kb` check also has `sdk` with numeric counts (`checked`, `ready`, `notReady`, `partial`, `unknown`, `checking`, `skippedPrivate`, `testOnlyIgnored`, `buildToolingIgnored`), never SDK names |
 | `--strict` | Exit 1 on WARN too |
 | `--only <ids>` / `--skip <ids>` | Comma-separated check ids |
 | `--offline` | Skip the SDK lookup. Every other check is already local |
@@ -178,7 +178,8 @@ The only network call is the public SDK lookup used by the `16kb` check:
 - Private and internal libraries are dropped on your machine first, including `com.github.*`, JitPack, `project(...)` modules and anything that isn't a known public Maven group. They're never printed or sent, only counted.
 - If a public SDK isn't in the catalog yet, its public `group:artifact` name (and public version string) is sent so the site can check it.
 - Your targetSdk, permissions, package name, module names and file contents are never sent.
-- `--no-submit` (or `--no-auto-check`, or `PLAY_PREFLIGHT_NO_SUBMIT=1`) still downloads the catalog, but never sends unknown SDK names. The run ends with "Downloaded the public SDK list. Sent nothing."
+- `--no-submit` (or `--no-auto-check`, or `PLAY_PREFLIGHT_NO_SUBMIT=1`) still downloads the catalog, but never sends unknown SDK names. The run ends with "Downloaded the public SDK list. Sent no SDK names."
+- In default online mode the same closing line says what actually happened: "Downloaded the public SDK list. No unknown SDKs, so nothing was sent." or "Downloaded the public SDK list. Sent K unknown public SDK names to be checked." If any private or internal libraries were skipped, that count is appended. `play-preflight 16kb` prints the same closing line.
 - `--offline` skips the lookup completely.
 
 ## The `16kb` command

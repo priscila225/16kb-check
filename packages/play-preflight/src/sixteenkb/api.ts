@@ -81,12 +81,12 @@ export async function enqueuePublicUnknown(
   client: ApiClient,
   publicUnknown: DeclaredDep[],
   catalogGroups?: ReadonlySet<string>,
-): Promise<DemandResponse> {
+): Promise<DemandResponse & { sent: number }> {
   const coordinates = publicDemandCoordinates(
     publicUnknown.map((d) => `${d.group}:${d.artifact}`),
     catalogGroups,
   );
-  if (!coordinates.length) return { ok: true, accepted: 0, jobs: [] };
+  if (!coordinates.length) return { ok: true, accepted: 0, jobs: [], sent: 0 };
   const allowed = new Set(coordinates);
   const versions: Record<string, string> = {};
   for (const d of publicUnknown) {
@@ -108,5 +108,6 @@ export async function enqueuePublicUnknown(
     ok: !!data?.ok,
     accepted: Number(data?.accepted || 0),
     jobs: Array.isArray(data?.jobs) ? data.jobs : [],
+    sent: coordinates.length,
   };
 }

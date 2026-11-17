@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createClient } from "../src/sixteenkb/api.ts";
 import { run as run16kb } from "../src/sixteenkb/cli.ts";
 import { main, HELP } from "../src/cli.ts";
@@ -10,6 +11,8 @@ import { VERSION } from "../src/version.ts";
 import { CHECK_IDS } from "../src/preflight/rules.ts";
 import { parseCheckArgv } from "../src/preflight/run.ts";
 import { NO_SUBMIT_LINE } from "../src/sixteenkb/cli.ts";
+import { privacyLine } from "../src/sixteenkb/closing.ts";
+import type { CatalogEntry } from "../src/sixteenkb/check/types.ts";
 import { CATALOG, byId, fixture, runJson, runText } from "./helpers/run.ts";
 
 type Call = { url: string; method: string; body: string };
@@ -295,4 +298,102 @@ test("dispatcher: default command is check, --version, help, unknown command", a
   assert.match(ch.out, /--no-submit/);
   assert.match(ch.out, /--no-auto-check/);
   assert.match(ch.out, /PLAY_PREFLIGHT_NO_SUBMIT/);
+});
+
+const READY_CATALOG: CatalogEntry[] = [
+  {
+    slug: "androidx-core",
+    name: "AndroidX Core",
+    status: "compatible",
+    minVersion: "any",
+    notes: "",
+    mavenCoords: ["androidx.core:*"],
+  },
+  {
+    slug: "play-billing",
+    name: "Play Billing",
+    status: "compatible",
+    minVersion: "any",
+    notes: "",
+    mavenCoords: ["com.android.billingclient:*"],
+  },
+];
+
+const ANDROID_APP = join(dirname(fileURLToPath(import.meta.url)), "16kb/fixtures/android-app");
+
+const ANDROID_APP_CATALOG: CatalogEntry[] = [
+  {
+    slug: "sentry-android",
+    name: "Sentry Android",
+    status: "compatible",
+    minVersion: "7.18.0",
+    notes: "",
+    mavenCoords: ["io.sentry:sentry-android", "io.sentry:sentry-android-*"],
+  },
+  {
+    slug: "mapbox-maps-android",
+    name: "Mapbox Maps SDK",
+    status: "partial",
+    minVersion: "11.7.0 (-ndk27 artifacts)",
+    notes: "",
+    mavenCoords: ["com.mapbox.maps:android", "com.mapbox.maps:android-ndk27"],
+  },
+  {
+    slug: "firebase-android",
+    name: "Firebase Android",
+    status: "compatible",
+    minVersion: "any (no native libraries in most modules)",
+    notes: "",
+    mavenCoords: ["com.google.firebase:*"],
+  },
+];
+
+test("online with no unknown SDKs: closing line says nothing was sent", async () => {
+  const text = await runText([fixture("ready-app"), "--no-color"], { api: spyClient([], READY_CATALOG), env: {} });
+  assert.equal(text.exitCode, 0);
+  assert.ok(text.out.trimEnd().endsWith("Downloaded the public SDK list. No unknown SDKs, so nothing was sent."), text.out);
+  const { json } = await runJson([fixture("ready-app")], { api: spyClient([], READY_CATALOG), env: {} });
+  assert.equal(json.privacy.lookedUp, true);
+  assert.equal(json.privacy.submitted, 0);
+  assert.equal(json.privacy.pendingUnknown, 0);
+  assert.equal(json.privacy.noSubmit, false);
+});
+
+test("online with unknown public SDKs: closing line says how many names were sent", async () => {
+  const text = await runText([fixture("legacy-app"), "--no-color"], { api: spyClient([], UNKNOWN_PUBLIC_CATALOG), env: {} });
+  assert.equal(text.exitCode, 1);
+  const expected = privacyLine({
+    offline: false,
+    lookedUp: true,
+    skippedPrivate: 1,
+    submitted: 3,
+    pendingUnknown: 3,
+  });
+  assert.ok(text.out.trimEnd().endsWith(expected), text.out);
+  assert.equal(expected, "Downloaded the public SDK list. Sent 3 unknown public SDK names to be checked. 1 private or internal library was skipped and never sent.");
+  const calls: Call[] = [];
+  const { json } = await runJson([fixture("legacy-app")], { api: spyClient(calls, UNKNOWN_PUBLIC_CATALOG), env: {} });
+  assert.equal(json.privacy.submitted, 3);
+  assert.equal(json.privacy.pendingUnknown, 3);
+  assert.equal(json.privacy.skippedPrivate, 1);
+  assert.equal(calls.filter((c) => c.method === "POST").length, 1);
+});
+
+test("check --json includes numeric 16kb SDK breakdown counts, not names", async () => {
+  const { json, exitCode } = await runJson([ANDROID_APP], { catalog: ANDROID_APP_CATALOG, enqueue: false });
+  assert.equal(exitCode, 0);
+  const kb = byId(json)["16kb"];
+  assert.ok(kb.sdk, JSON.stringify(kb));
+  assert.equal(kb.sdk.checked, 7);
+  assert.equal(kb.sdk.ready, 5);
+  assert.equal(kb.sdk.notReady, 1);
+  assert.equal(kb.sdk.partial, 1);
+  assert.equal(kb.sdk.unknown, 0);
+  assert.equal(kb.sdk.checking, 0);
+  assert.equal(kb.sdk.skippedPrivate, 2);
+  assert.equal(kb.sdk.testOnlyIgnored, 2);
+  assert.equal(kb.sdk.buildToolingIgnored, 0);
+  const encoded = JSON.stringify(kb.sdk);
+  assert.doesNotMatch(encoded, /io\.sentry|com\.mapbox|com\.github|secret-kit|junit|okhttp|firebase/);
+  for (const n of Object.values(kb.sdk)) assert.equal(typeof n, "number");
 });

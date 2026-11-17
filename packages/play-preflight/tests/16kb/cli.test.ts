@@ -6,6 +6,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createClient } from "../../src/sixteenkb/api.ts";
 import { HELP, NO_SUBMIT_LINE, parseArgv, run } from "../../src/sixteenkb/cli.ts";
+import { privacyLine } from "../../src/sixteenkb/closing.ts";
 import { VERSION } from "../../src/sixteenkb/version.ts";
 import { ciShouldFail } from "../../src/sixteenkb/report.ts";
 import { DEADLINE_NOTE } from "../../src/sixteenkb/status.ts";
@@ -190,27 +191,27 @@ test("a still-checking library shows the settling note in text and JSON", async 
 
 type Call = { url: string; method: string; body: string };
 
-function spyClient(calls: Call[]) {
+function spyClient(calls: Call[], entries: CatalogEntry[] = []) {
   return createClient({
     baseUrl: "https://devbooth.test",
     fetch: (async (url: string | URL, init?: RequestInit) => {
       calls.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
       if (String(url).includes("/api/catalog")) {
-        return new Response(JSON.stringify({ ok: true, count: 0, entries: [] }), { status: 200 });
+        return new Response(JSON.stringify({ ok: true, count: entries.length, entries }), { status: 200 });
       }
       return new Response(JSON.stringify({ ok: true, accepted: 0, jobs: [] }), { status: 200 });
     }) as typeof fetch,
   });
 }
 
-async function runWithSpy(argv: string[], extra: { env?: NodeJS.ProcessEnv } = {}) {
+async function runWithSpy(argv: string[], extra: { env?: NodeJS.ProcessEnv; catalog?: CatalogEntry[] } = {}) {
   const calls: Call[] = [];
   let out = "";
   let err = "";
   const result = await run(argv, {
     stdout: { write: (s) => { out += s; }, isTTY: false },
     stderr: { write: (s) => { err += s; }, isTTY: false },
-    api: spyClient(calls),
+    api: spyClient(calls, extra.catalog ?? []),
     env: extra.env ?? {},
   });
   return { result, out, err, calls };
@@ -260,4 +261,51 @@ test("unknown flags and a missing project fail with exit 2", async () => {
   } finally {
     await rm(empty, { recursive: true, force: true });
   }
+});
+
+const COVERING_CATALOG: CatalogEntry[] = [
+  ...catalog,
+  { slug: "okhttp", name: "OkHttp", status: "compatible", minVersion: "any", notes: "", mavenCoords: ["com.squareup.okhttp3:okhttp"] },
+  { slug: "okio", name: "Okio", status: "compatible", minVersion: "any", notes: "", mavenCoords: ["com.squareup.okio:okio"] },
+  { slug: "androidx-core", name: "AndroidX Core", status: "compatible", minVersion: "any", notes: "", mavenCoords: ["androidx.core:*"] },
+  { slug: "androidx-annotation", name: "AndroidX Annotation", status: "compatible", minVersion: "any", notes: "", mavenCoords: ["androidx.annotation:*"] },
+];
+
+test("16kb online with no unknown SDKs: closing line says nothing was sent", async () => {
+  const { result, out, calls } = await runWithSpy(["--path", fixture, "--no-color"], { catalog: COVERING_CATALOG });
+  assert.equal(result.exitCode, 0);
+  assert.equal(calls.filter((c) => c.method === "POST").length, 0);
+  const expected = privacyLine({
+    offline: false,
+    lookedUp: true,
+    skippedPrivate: 2,
+    submitted: 0,
+    pendingUnknown: 0,
+  });
+  assert.ok(out.trimEnd().endsWith(expected), out);
+  assert.match(expected, /No unknown SDKs, so nothing was sent/);
+  const jsonRun = await runWithSpy(["--path", fixture, "--json"], { catalog: COVERING_CATALOG });
+  assert.ok(jsonRun.err.trimEnd().endsWith(expected), jsonRun.err);
+  JSON.parse(jsonRun.out);
+});
+
+test("16kb online with unknown public SDKs: closing line says how many names were sent", async () => {
+  const { result, out, calls } = await runWithSpy(["--path", fixture, "--no-color"]);
+  assert.equal(result.exitCode, 0);
+  const posts = calls.filter((c) => c.method === "POST");
+  assert.equal(posts.length, 1);
+  const sent = (JSON.parse(posts[0].body) as { coordinates: string[] }).coordinates.length;
+  assert.ok(sent > 0, posts[0].body);
+  const expected = privacyLine({
+    offline: false,
+    lookedUp: true,
+    skippedPrivate: 2,
+    submitted: sent,
+    pendingUnknown: sent,
+  });
+  assert.ok(out.trimEnd().endsWith(expected), out);
+  assert.match(expected, new RegExp(`Sent ${sent} unknown public SDK names to be checked`));
+  const jsonRun = await runWithSpy(["--path", fixture, "--json"]);
+  assert.ok(jsonRun.err.trimEnd().endsWith(expected), jsonRun.err);
+  JSON.parse(jsonRun.out);
 });

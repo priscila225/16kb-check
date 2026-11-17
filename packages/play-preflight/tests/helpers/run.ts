@@ -33,7 +33,18 @@ export const CATALOG: CatalogEntry[] = [
   },
 ];
 
-export type JsonCheck = { id: string; status: string; title: string; detail: string; deadline: string | null; source: string; link: string; items: string[] };
+export type SdkCounts = {
+  checked: number;
+  ready: number;
+  notReady: number;
+  partial: number;
+  unknown: number;
+  checking: number;
+  skippedPrivate: number;
+  testOnlyIgnored: number;
+  buildToolingIgnored: number;
+};
+export type JsonCheck = { id: string; status: string; title: string; detail: string; deadline: string | null; source: string; link: string; items: string[]; sdk?: SdkCounts };
 export type JsonOut = {
   tool: string;
   version: string;
@@ -41,7 +52,7 @@ export type JsonOut = {
   checks: JsonCheck[];
   summary: Record<string, number>;
   notes: string[];
-  privacy: { offline: boolean; noSubmit?: boolean; lookedUp: boolean; skippedPrivate: number };
+  privacy: { offline: boolean; noSubmit?: boolean; lookedUp: boolean; skippedPrivate: number; submitted?: number; pendingUnknown?: number };
   exitCode: number;
 };
 

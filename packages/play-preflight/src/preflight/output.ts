@@ -1,4 +1,7 @@
 import type { CheckResult, CheckStatus } from "./checks";
+import { privacyLine, type Privacy } from "../sixteenkb/closing";
+
+export { privacyLine, type Privacy };
 
 export type Header = {
   module?: string;
@@ -13,22 +16,11 @@ export type Header = {
   manifestKind: string;
 };
 
-export type Privacy = { offline: boolean; noSubmit?: boolean; lookedUp: boolean; skippedPrivate: number };
-
 const LABEL: Record<CheckStatus, string> = { pass: "PASS", warn: "WARN", fail: "FAIL", skip: "SKIP", info: "INFO" };
 const COLOR: Record<CheckStatus, string> = { pass: "32", warn: "33", fail: "31", skip: "90", info: "36" };
 
 function paint(on: boolean, code: string, s: string): string {
   return on ? `\u001b[${code}m${s}\u001b[0m` : s;
-}
-
-export function privacyLine(p: Privacy): string {
-  if (p.offline) return "Checked fully offline. Nothing left this machine.";
-  if (p.noSubmit && p.lookedUp) return "Downloaded the public SDK list. Sent nothing.";
-  const base = p.lookedUp
-    ? "Checked locally. Only public SDK names were looked up on devbooth.dev."
-    : "Checked locally. Nothing about your project was uploaded.";
-  return p.skippedPrivate ? `${base} ${p.skippedPrivate} private or internal ${p.skippedPrivate === 1 ? "library was" : "libraries were"} skipped and never sent.` : base;
 }
 
 export function formatCheckText(input: {
@@ -94,6 +86,7 @@ export function toCheckJson(input: {
       source: r.source,
       link: r.link,
       items: r.items,
+      ...(r.sdk ? { sdk: r.sdk } : {}),
     })),
     summary: input.counts,
     notes: input.notes,

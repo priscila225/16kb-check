@@ -12,6 +12,8 @@ First release as play-preflight (formerly 16kb-check).
 - Predictive back: only an `<application>` opt-out covers the whole app. An activity opt-out, like one a library adds, only excuses that activity.
 - Foreground services: an untyped service from a dependency, or one whose owner can't be told (APK only), is a WARN about the runtime risk. It's a FAIL only when the service is in your own manifest.
 - `--json`, `--only`, `--skip`, `--offline`, `--module`.
-- `--no-submit` (alias `--no-auto-check`, or `PLAY_PREFLIGHT_NO_SUBMIT=1`) downloads the public SDK catalog but never POSTs unknown SDK names to `/api/check-demand`.
+- `--no-submit` (alias `--no-auto-check`, or `PLAY_PREFLIGHT_NO_SUBMIT=1`) downloads the public SDK catalog but never POSTs unknown SDK names to `/api/check-demand`. The run ends with "Downloaded the public SDK list. Sent no SDK names."
+- In default online mode the closing line says whether any unknown public SDK names were sent, including the count. `play-preflight 16kb` uses the same closing line.
+- `check --json` includes numeric SDK breakdown counts on the `16kb` check (`ready`, `unknown`, `checking`, private skipped, test-only ignored, build-time ignored).
 - `play-preflight 16kb` is the old 16kb-check table, unchanged.
 - The SDK lookup sends `User-Agent: play-preflight/<version>`.

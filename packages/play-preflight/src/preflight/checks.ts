@@ -1,11 +1,25 @@
 import type { CheckReport, DeclaredDep } from "../sixteenkb/check/types";
 import type { AgpCheck } from "../sixteenkb/check/agp";
+import { countStatuses, rowsFromReport } from "../sixteenkb/report";
 import type { BinaryScan } from "./binary";
 import { hasPermission, isFalse, isTrue, sameComponent, type ManifestComponent, type ManifestInfo } from "./manifest";
 import type { TextFile } from "./targetsdk";
 import { DATES, PLAY_MIN_TARGET, RULES, fmtDate, type CheckId, type FormFactor } from "./rules";
 
 export type CheckStatus = "pass" | "warn" | "fail" | "skip" | "info";
+
+/** Numeric SDK breakdown for the 16kb check. Counts only, never coordinates. */
+export type SdkCounts = {
+  checked: number;
+  ready: number;
+  notReady: number;
+  partial: number;
+  unknown: number;
+  checking: number;
+  skippedPrivate: number;
+  testOnlyIgnored: number;
+  buildToolingIgnored: number;
+};
 
 export type CheckResult = {
   id: CheckId;
@@ -17,10 +31,12 @@ export type CheckResult = {
   source: string;
   link: string;
   items: string[];
+  /** Set on the 16kb check after a catalog lookup. */
+  sdk?: SdkCounts;
 };
 
 export type SdkLookup =
-  | { status: "ok"; report: CheckReport; skippedPrivate: number }
+  | { status: "ok"; report: CheckReport; skippedPrivate: number; testOnlyIgnored: number; buildToolingIgnored: number }
   | { status: "offline" }
   | { status: "error"; message: string }
   | { status: "none" };
@@ -108,6 +124,28 @@ export function checkTargetApi(ctx: CheckContext): CheckResult {
 
 const BLOCKING = new Set(["not-yet", "partial", "update-needed"]);
 
+function sdkCounts(sdk: SdkLookup): SdkCounts | undefined {
+  if (sdk.status !== "ok") return undefined;
+  const rows = rowsFromReport(sdk.report).filter((r) => !r.plugin);
+  const counts = countStatuses(rows);
+  return {
+    checked: rows.length,
+    ready: counts.ready,
+    notReady: counts["not ready"],
+    partial: counts.partial,
+    unknown: counts.unknown,
+    checking: counts.checking,
+    skippedPrivate: sdk.skippedPrivate,
+    testOnlyIgnored: sdk.testOnlyIgnored,
+    buildToolingIgnored: sdk.buildToolingIgnored,
+  };
+}
+
+function withSdk(r: CheckResult, ctx: CheckContext): CheckResult {
+  const sdk = sdkCounts(ctx.sdk);
+  return sdk ? { ...r, sdk } : r;
+}
+
 // B. 16 KB page size
 export function check16kb(ctx: CheckContext): CheckResult {
   const parts: { status: CheckStatus; text: string }[] = [];
@@ -176,13 +214,13 @@ export function check16kb(ctx: CheckContext): CheckResult {
         : sdk.status === "error"
           ? "couldn't reach the SDK catalog and no APK/AAB given"
           : "no dependencies or native libraries found";
-    return result("16kb", "skip", why, items, DATES.sixteenKbBlock);
+    return withSdk(result("16kb", "skip", why, items, DATES.sixteenKbBlock), ctx);
   }
   const status = worst(parts.map((p) => p.status));
   const lead = parts.filter((p) => p.status === status).map((p) => p.text);
   const rest = parts.filter((p) => p.status !== status).map((p) => p.text);
   const detail = lead.join("; ") + (status === "fail" || status === "warn" ? `. ${when}` : "");
-  return result("16kb", status, detail, [...rest, ...items], DATES.sixteenKbBlock);
+  return withSdk(result("16kb", status, detail, [...rest, ...items], DATES.sixteenKbBlock), ctx);
 }
 
 // J. Play Billing Library

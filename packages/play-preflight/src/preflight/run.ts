@@ -230,6 +230,8 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
 
   // The only network step, and only when the 16 KB check runs on a project.
   let sdk: SdkLookup = { status: "none" };
+  let submitted = 0;
+  let pendingUnknown = 0;
   if (project && selected.includes("16kb") && project.parsed.dependencies.length) {
     if (opts.offline) sdk = { status: "offline" };
     else {
@@ -240,7 +242,19 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
         enqueue: opts.noSubmit ? false : io.enqueue,
         stderr: { write: (s: string) => void errors.push(s.trim()) },
       });
-      sdk = res.ok ? { status: "ok", report: res.report, skippedPrivate: res.skippedPrivate } : { status: "error", message: errors[0] ?? "unknown error" };
+      sdk = res.ok
+        ? {
+            status: "ok",
+            report: res.report,
+            skippedPrivate: res.skippedPrivate,
+            testOnlyIgnored: project.parsed.testDependencies.length,
+            buildToolingIgnored: project.parsed.buildToolingDependencies.length,
+          }
+        : { status: "error", message: errors[0] ?? "unknown error" };
+      if (res.ok) {
+        submitted = res.submitted;
+        pendingUnknown = res.pendingUnknown;
+      }
       // Non-fatal notices (like a failed auto-check request) go to stderr.
       if (res.ok) for (const e of errors) io.stderr.write(`${e}\n`);
     }
@@ -285,6 +299,8 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
     noSubmit: opts.noSubmit && !opts.offline,
     lookedUp: sdk.status === "ok",
     skippedPrivate: sdk.status === "ok" ? sdk.skippedPrivate : 0,
+    submitted,
+    pendingUnknown,
   };
 
   if (opts.json) {

@@ -7,10 +7,11 @@ import { parseProjectFiles } from "./check/parse";
 import { buildReport, markPublicChecking } from "./check/match";
 import type { CatalogEntry, CheckReport, DeclaredDep, ParseResult } from "./check/types";
 import { splitPublicDeps } from "./privacy";
+import { privacyLine } from "./closing";
 import { createClient, enqueuePublicUnknown, fetchCatalog, type ApiClient } from "./api";
 import { annotateGradlePlugins, ciShouldFail, formatTable, toJson, useColor, type ColorMode, type ReportExtras } from "./report";
 import { checkAgp, isAgpPlugin } from "./check/agp";
-import { catalogGroupsFrom, isCandidatePublicCoordinate, isPrivateOrInternalGroup } from "./check/public-coords";
+import { catalogGroupsFrom, isCandidatePublicCoordinate, isPrivateOrInternalGroup, publicDemandCoordinates } from "./check/public-coords";
 
 export const HELP = `play-preflight 16kb — check an Android project for Google Play 16KB page-size compatibility.
 (This is the command that used to be 16kb-check.)
@@ -39,7 +40,7 @@ Privacy:
   https://devbooth.dev/16kb
 `;
 
-export const NO_SUBMIT_LINE = "Downloaded the public SDK list. Sent nothing.";
+export { NO_SUBMIT_LINE } from "./closing";
 
 /** True when PLAY_PREFLIGHT_NO_SUBMIT is set to a truthy value (1, true, yes). */
 export function envNoSubmit(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -140,7 +141,7 @@ export async function run(argv: string[], io: RunIo = { stdout: process.stdout, 
     stderr: io.stderr,
   });
   if (!resolved.ok) return { exitCode: 2, skippedPrivate: 0 };
-  const { report, skippedPrivate, catalogGroups } = resolved;
+  const { report, skippedPrivate, catalogGroups, submitted, pendingUnknown } = resolved;
   const extras = buildExtras(parsed.plugins, parsed.testDependencies.length, parsed.buildToolingDependencies.length, catalogGroups);
 
   extras.checkedAt = new Date().toISOString();
@@ -150,11 +151,16 @@ export async function run(argv: string[], io: RunIo = { stdout: process.stdout, 
   } else {
     io.stdout.write(formatTable(report, skippedPrivate, color, extras));
   }
-  // Only when we actually downloaded the catalog (not a test-injected copy) and sent nothing.
-  if (opts.noSubmit && !io.catalog) {
-    if (opts.json) io.stderr.write(`${NO_SUBMIT_LINE}\n`);
-    else io.stdout.write(`${NO_SUBMIT_LINE}\n`);
-  }
+  const line = privacyLine({
+    offline: false,
+    noSubmit: opts.noSubmit,
+    lookedUp: true,
+    skippedPrivate,
+    submitted,
+    pendingUnknown,
+  });
+  if (opts.json) io.stderr.write(`${line}\n`);
+  else io.stdout.write(`${line}\n`);
 
   const exitCode = opts.ci && ciShouldFail(report) ? 1 : 0;
   return { exitCode, report, skippedPrivate };
@@ -187,7 +193,7 @@ export function buildExtras(
 }
 
 export type CatalogResolution =
-  | { ok: true; report: CheckReport; skippedPrivate: number; catalogGroups: ReadonlySet<string>; catalog: CatalogEntry[] }
+  | { ok: true; report: CheckReport; skippedPrivate: number; catalogGroups: ReadonlySet<string>; catalog: CatalogEntry[]; submitted: number; pendingUnknown: number }
   | { ok: false };
 
 /**
@@ -229,10 +235,16 @@ export async function resolveAgainstCatalog(
     }
   }
 
+  const pendingUnknown = publicDemandCoordinates(
+    unknownPublic.map((d) => `${d.group}:${d.artifact}`),
+    catalogGroups,
+  ).length;
+  let submitted = 0;
   const shouldEnqueue = opts.enqueue !== false && unknownPublic.length > 0 && !opts.catalog;
   if (shouldEnqueue) {
     try {
       const demand = await enqueuePublicUnknown(client, unknownPublic, catalogGroups);
+      submitted = demand.sent;
       if (demand.jobs.length) {
         const next = [...catalog];
         const accepted: string[] = [];
@@ -279,5 +291,5 @@ export async function resolveAgainstCatalog(
     }
   }
 
-  return { ok: true, report, skippedPrivate, catalogGroups, catalog };
+  return { ok: true, report, skippedPrivate, catalogGroups, catalog, submitted, pendingUnknown };
 }
