@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseXml } from "../src/preflight/xml.ts";
 import { mergeManifests, readManifest } from "../src/preflight/manifest.ts";
-import { evaluateTargetExpr, parseProperties, resolveTargetSdk, targetSdkExpressions } from "../src/preflight/targetsdk.ts";
+import { evaluateTargetExpr, parseProperties, resolveSdk, resolveTargetSdk, sdkExpressions, targetSdkExpressions } from "../src/preflight/targetsdk.ts";
 
 test("XML: comments, CDATA, entities, quotes with > inside, and self-closing tags", () => {
   const doc = parseXml(`\uFEFF<?xml version="1.0"?>
@@ -76,4 +76,14 @@ test("targetSdk lines: Groovy, Kotlin, one-liners; comments and targetSdkPreview
     { name: "b.kt", text: "targetSdk = 36" },
   ]);
   assert.equal(conflict.value, undefined, "two different convention values: don't guess");
+});
+
+test("minSdk and compileSdk lines: Groovy, Kotlin, the release() DSL and android-NN strings", () => {
+  const ctx = { catalogVersions: { "min-sdk": "24" }, gradleProperties: {}, sharedFiles: [] };
+  assert.deepEqual(sdkExpressions("minSdkVersion 21\nminSdkPreview = \"X\"", "min"), ["21"]);
+  assert.equal(resolveSdk("min", { name: "b", text: "minSdk = libs.versions.min.sdk.get().toInt()" }, ctx, []).value, 24);
+  assert.equal(resolveSdk("compile", { name: "b", text: "compileSdk = 36\ncompileSdkExtension = 19" }, ctx, []).value, 36);
+  assert.equal(resolveSdk("compile", { name: "b", text: 'compileSdkVersion "android-35"' }, ctx, []).value, 35);
+  assert.equal(resolveSdk("compile", { name: "b", text: "compileSdk {\n    version = release(36)\n}" }, ctx, []).value, 36);
+  assert.equal(resolveSdk("compile", { name: "b", text: "compileSdk = computeIt()" }, ctx, []).value, undefined);
 });

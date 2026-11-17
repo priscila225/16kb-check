@@ -37,7 +37,7 @@ export type JsonCheck = { id: string; status: string; title: string; detail: str
 export type JsonOut = {
   tool: string;
   version: string;
-  input: { module?: string; targetSdk?: number; targetFrom?: string; formFactor: string; manifestKind: string; binary?: string };
+  input: { module?: string; targetSdk?: number; targetFrom?: string; minSdk?: number; minSdkFrom?: string; compileSdk?: number; compileSdkFrom?: string; formFactor: string; manifestKind: string; binary?: string };
   checks: JsonCheck[];
   summary: Record<string, number>;
   notes: string[];

@@ -166,3 +166,91 @@ test("broken or missing binaries exit 2", async () => {
   const both = await runText(["--apk", notZip, "--aab", notZip]);
   assert.equal(both.exitCode, 2);
 });
+
+const act = (name: string, extra: { name: string; value: boolean }[] = []) => ({ name: "activity", attrs: [{ name: "name", value: name }, ...extra] });
+const svc = (name: string) => ({ name: "service", attrs: [{ name: "name", value: name }] });
+const apkWith = (name: string, tree: Parameters<typeof manifestTree>[0]) => write(name, makeZip([{ name: "AndroidManifest.xml", data: makeAxml(manifestTree(tree)) }]));
+
+test("APK predictive-back: a library activity's opt-out doesn't hide the app's own old back API uses", async () => {
+  const apk = apkWith("back-lib.apk", {
+    targetSdk: 36,
+    activities: [
+      act("com.example.app.MainActivity"),
+      act("com.example.app.SettingsActivity"),
+      act("com.example.internallib.ui.LibraryActivity", [{ name: "enableOnBackInvokedCallback", value: false }]),
+    ],
+  });
+  const { json } = await runJson([fixture("checks/back-library-optout"), "--apk", apk, "--offline", "--only", "predictive-back"]);
+  const c = byId(json)["predictive-back"];
+  assert.equal(c.status, "warn");
+  assert.match(c.detail, /^2 files use the old back APIs/);
+  assert.ok(c.items.some((i) => i.includes("MainActivity.kt")));
+  assert.ok(c.items.some((i) => i.includes("SettingsActivity.kt")));
+  assert.ok(c.items.some((i) => i.includes("com.example.internallib.ui.LibraryActivity") && /only covers that activity/.test(i)));
+});
+
+test("APK predictive-back: an <application> opt-out still covers the whole app", async () => {
+  const apk = apkWith("back-app.apk", {
+    targetSdk: 36,
+    application: [{ name: "enableOnBackInvokedCallback", value: false }],
+    activities: [act("com.example.app.MainActivity"), act("com.example.app.SettingsActivity")],
+  });
+  const { json } = await runJson([fixture("checks/back-library-optout"), "--apk", apk, "--offline", "--only", "predictive-back"]);
+  const c = byId(json)["predictive-back"];
+  assert.equal(c.status, "info");
+  assert.match(c.detail, /on <application>/);
+});
+
+test("APK predictive-back: opting one activity back in keeps its file counted under an app-wide opt-out", async () => {
+  const apk = apkWith("back-optin.apk", {
+    targetSdk: 36,
+    application: [{ name: "enableOnBackInvokedCallback", value: false }],
+    activities: [act("com.example.app.MainActivity", [{ name: "enableOnBackInvokedCallback", value: true }]), act("com.example.app.SettingsActivity")],
+  });
+  const { json } = await runJson([fixture("checks/back-library-optout"), "--apk", apk, "--offline", "--only", "predictive-back"]);
+  const c = byId(json)["predictive-back"];
+  assert.equal(c.status, "warn");
+  assert.ok(c.items.some((i) => i.includes("MainActivity.kt")));
+  assert.ok(!c.items.some((i) => /SettingsActivity\.kt: overrides/.test(i)));
+});
+
+test("APK foreground-services: an untyped service from a dependency warns as a risk, with or without the project", async () => {
+  const apk = apkWith("fgs-lib.apk", { targetSdk: 36, permissions: ["FOREGROUND_SERVICE"], services: [svc("com.example.internallib.sync.SyncService")] });
+  const withProject = await runJson([fixture("checks/fgs-library-service"), "--apk", apk, "--offline", "--only", "foreground-services"]);
+  const c = byId(withProject.json)["foreground-services"];
+  assert.equal(withProject.exitCode, 0);
+  assert.equal(c.status, "warn");
+  assert.match(c.detail, /comes from dependencies/);
+  assert.match(c.detail, /can crash at runtime .*if startForeground\(\) is called on it/);
+  assert.doesNotMatch(c.detail, /throws/);
+  assert.ok(c.items.some((i) => i.startsWith("com.example.internallib.sync.SyncService")));
+  const apkOnly = await runJson(["--apk", apk, "--offline", "--only", "foreground-services"]);
+  const a = byId(apkOnly.json)["foreground-services"];
+  assert.equal(a.status, "warn", "APK only: can't tell whose it is");
+  assert.match(a.detail, /unclear whether it's yours/);
+});
+
+test("APK foreground-services: an untyped service declared in the app's own manifest fails", async () => {
+  const apk = apkWith("fgs-own.apk", {
+    targetSdk: 36,
+    permissions: ["FOREGROUND_SERVICE"],
+    services: [svc("dev.example.fixture.UploadService"), svc("com.example.internallib.sync.SyncService")],
+  });
+  const { json, exitCode } = await runJson([fixture("checks/fgs-no-type"), "--apk", apk, "--offline", "--only", "foreground-services"]);
+  const c = byId(json)["foreground-services"];
+  assert.equal(exitCode, 1);
+  assert.equal(c.status, "fail");
+  assert.match(c.detail, /1 is in your own manifest/);
+  assert.ok(c.items.some((i) => i.startsWith("dev.example.fixture.UploadService") && i.includes("app/src/main/AndroidManifest.xml")));
+  assert.ok(!c.items.some((i) => i.startsWith("com.example.internallib")), "only the app's own service is listed as the cause");
+});
+
+test("APK header: minSdk comes from the APK manifest; compileSdk from the project", async () => {
+  const apk = apkWith("sdk.apk", { targetSdk: 36 });
+  const apkOnly = await runJson(["--apk", apk, "--offline", "--only", "target-api"]);
+  assert.equal(apkOnly.json.input.minSdk, 24);
+  assert.equal(apkOnly.json.input.compileSdk, undefined, "not stamped in this APK, so not reported");
+  const both = await runJson([fixture("checks/sdk-buildsrc"), "--apk", apk, "--offline", "--only", "target-api"]);
+  assert.equal(both.json.input.minSdk, 24, "the APK wins for minSdk, like targetSdk");
+  assert.equal(both.json.input.compileSdk, 36);
+});

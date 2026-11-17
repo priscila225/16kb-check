@@ -207,6 +207,17 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
   else if (binary?.manifest?.targetSdk !== undefined) target = { value: binary.manifest.targetSdk, from: binary.file };
   else target = { ...(project?.target ?? {}) };
   const effective = target.value ?? required;
+  // minSdk and compileSdk are only reported, never checked. Same order as targetSdk.
+  const minSdk =
+    binary?.manifest?.minSdk !== undefined ? { value: binary.manifest.minSdk, from: binary.file } : { ...(project?.minSdk ?? {}) };
+  const compileSdk =
+    project?.compileSdk.value !== undefined
+      ? { ...project.compileSdk }
+      : binary?.manifest?.compileSdk !== undefined
+        ? { value: binary.manifest.compileSdk, from: binary.file }
+        : manifest?.compileSdk !== undefined
+          ? { value: manifest.compileSdk, from: manifest.files[0] }
+          : {};
 
   // The only network step, and only when the 16 KB check runs on a project.
   let sdk: SdkLookup = { status: "none" };
@@ -232,6 +243,7 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
     target: { ...target, effective, assumed: target.value === undefined, formFactor, required },
     manifest,
     manifestKind,
+    ownManifest: project?.ownManifest,
     dependencies: project?.parsed.dependencies,
     billingMentionedIn: project?.billingMentionedIn,
     edgeToEdgeOptOuts: project?.edgeToEdgeOptOuts,
@@ -252,6 +264,10 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
     binary: binary ? `${binary.kind.toUpperCase()} ${binary.file}` : undefined,
     targetSdk: target.value,
     targetFrom: target.from,
+    minSdk: minSdk.value,
+    minSdkFrom: minSdk.from,
+    compileSdk: compileSdk.value,
+    compileSdkFrom: compileSdk.from,
     formFactor,
     manifestKind,
   };

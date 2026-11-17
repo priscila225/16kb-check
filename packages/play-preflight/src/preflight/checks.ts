@@ -1,7 +1,7 @@
 import type { CheckReport, DeclaredDep } from "../sixteenkb/check/types";
 import type { AgpCheck } from "../sixteenkb/check/agp";
 import type { BinaryScan } from "./binary";
-import { hasPermission, isFalse, isTrue, type ManifestInfo } from "./manifest";
+import { hasPermission, isFalse, isTrue, sameComponent, type ManifestComponent, type ManifestInfo } from "./manifest";
 import type { TextFile } from "./targetsdk";
 import { DATES, PLAY_MIN_TARGET, RULES, fmtDate, type CheckId, type FormFactor } from "./rules";
 
@@ -38,6 +38,8 @@ export type CheckContext = {
   };
   manifest?: ManifestInfo;
   manifestKind: "apk" | "merged" | "source" | "none";
+  /** The project's own source manifests, to tell app components from ones dependencies add. */
+  ownManifest?: ManifestInfo;
   dependencies?: DeclaredDep[];
   billingMentionedIn?: string;
   edgeToEdgeOptOuts?: { file: string; value: string }[];
@@ -256,6 +258,17 @@ const FGS_TYPE_PERMISSION: Record<string, string | null> = {
   none: null,
 };
 
+/**
+ * Is a component from the checked manifest declared in the project's own source manifests?
+ * true or false when we can tell, undefined when we can't (APK only, or no source manifests).
+ */
+export function isOwnComponent(ctx: CheckContext, c: ManifestComponent, kind: "services" | "activities"): boolean | undefined {
+  // Source manifests are the app's own by definition.
+  if (ctx.manifestKind === "source") return true;
+  if (!ctx.ownManifest) return undefined;
+  return ctx.ownManifest[kind].some((o) => sameComponent(c.name, o.name));
+}
+
 export function checkForegroundServices(ctx: CheckContext): CheckResult {
   const m = ctx.manifest;
   if (!m) return result("foreground-services", "skip", NO_MANIFEST);
@@ -273,7 +286,31 @@ export function checkForegroundServices(ctx: CheckContext): CheckResult {
   const info: string[] = [];
   const allTypes = new Set<string>();
   if (fgsPerm && !typed.length) {
-    fails.push("FOREGROUND_SERVICE is declared but no <service> has android:foregroundServiceType. startForeground() throws MissingForegroundServiceTypeException");
+    const own = untyped.filter((s) => isOwnComponent(ctx, s, "services") === true);
+    if (own.length) {
+      fails.push(
+        `FOREGROUND_SERVICE is declared but no <service> has android:foregroundServiceType (${own.length === 1 ? "1 is" : `${own.length} are`} in your own manifest). startForeground() on ${own.length === 1 ? "it" : "them"} throws MissingForegroundServiceTypeException`,
+      );
+      const declaredIn = (s: ManifestComponent) =>
+        ctx.manifestKind === "source" ? s.file : (ctx.ownManifest?.services.find((o) => sameComponent(s.name, o.name))?.file ?? s.file);
+      info.push(...cap(own.map((s) => `${s.name}: no foregroundServiceType (declared in ${declaredIn(s)})`)));
+    } else if (untyped.length) {
+      const known = untyped.every((s) => isOwnComponent(ctx, s, "services") === false);
+      const where = known
+        ? `${untyped.length === 1 ? "1 untyped service comes" : `${untyped.length} untyped services come`} from dependencies`
+        : untyped.length === 1
+          ? "1 service has no type, and it's unclear whether it's yours or a library's"
+          : `${untyped.length} services have no type, and it's unclear which are yours`;
+      warns.push(
+        `FOREGROUND_SERVICE is declared but no <service> has android:foregroundServiceType. ${where}. A service without a type can crash at runtime (MissingForegroundServiceTypeException) if startForeground() is called on it`,
+      );
+      info.push(...cap(untyped.map((s) => `${s.name}: no foregroundServiceType`)));
+      if (!known) info.push("Pass the project folder with --apk to tell your own services from library ones.");
+    } else {
+      warns.push(
+        "FOREGROUND_SERVICE is declared but no <service> is. If a library adds a service at build time and calls startForeground() on it, it can crash at runtime without a foregroundServiceType",
+      );
+    }
   }
   if (!fgsPerm && typed.length) fails.push("services declare a foregroundServiceType but FOREGROUND_SERVICE isn't declared");
   for (const s of typed) {
@@ -382,38 +419,83 @@ const BACK_PATTERNS: [RegExp, string][] = [
   [/\bKEYCODE_BACK\b/, "handles KEYCODE_BACK"],
 ];
 
+type DeclaredClass = { simple: string; full?: string };
+
+/** Classes declared in a Kotlin or Java file, with the package when it has one. */
+function declaredClasses(text: string): DeclaredClass[] {
+  const pkg = /^\s*package\s+([\w.]+)/m.exec(text)?.[1];
+  const out: DeclaredClass[] = [];
+  for (const m of text.matchAll(/\b(?:class|object)\s+([A-Za-z_]\w*)/g)) out.push({ simple: m[1], full: pkg ? `${pkg}.${m[1]}` : undefined });
+  return out;
+}
+
+function activityMatches(a: ManifestComponent, c: DeclaredClass): boolean {
+  const name = a.name;
+  if (c.full && name === c.full) return true;
+  // Unqualified names (".Foo", "Foo", or a file without a package) match on the class name.
+  const simple = name.slice(name.lastIndexOf(".") + 1);
+  if (simple !== c.simple) return false;
+  return !c.full || name.startsWith(".") || !name.includes(".");
+}
+
 export function checkPredictiveBack(ctx: CheckContext): CheckResult {
   const m = ctx.manifest;
-  const optedOut = m
-    ? [m.application, ...m.activities.map((a) => a.attrs)].some((a) => isFalse(a["android:enableOnBackInvokedCallback"]))
-    : false;
+  const attr = "android:enableOnBackInvokedCallback";
+  const appOptOut = !!m && isFalse(m.application[attr]);
+  const activityOptOuts = m ? m.activities.filter((a) => isFalse(a.attrs[attr])) : [];
+  const activityOptIns = m ? m.activities.filter((a) => isTrue(a.attrs[attr])) : [];
   const t = ctx.target.effective;
-  if (optedOut) {
-    return result("predictive-back", "info", 'opted out with enableOnBackInvokedCallback="false". This is temporary, so plan the move to OnBackPressedCallback');
+  // Only an <application>-level opt-out covers the whole app, and only when no activity opts back in.
+  if (appOptOut && !activityOptIns.length) {
+    return result("predictive-back", "info", 'opted out with enableOnBackInvokedCallback="false" on <application>. This is temporary, so plan the move to OnBackPressedCallback');
   }
+  const optOutNote = activityOptOuts.length
+    ? [
+        `${activityOptOuts.length} ${activityOptOuts.length === 1 ? "activity opts" : "activities opt"} out with enableOnBackInvokedCallback="false" (${cap(activityOptOuts.map((a) => a.name), 3).join(", ")}). That only covers ${activityOptOuts.length === 1 ? "that activity" : "those activities"}.`,
+      ]
+    : [];
   if (!ctx.sources) {
     if (!m) return result("predictive-back", "skip", NO_MANIFEST);
-    return result("predictive-back", "skip", "needs the project folder to look for onBackPressed() and KEYCODE_BACK");
+    return result("predictive-back", "skip", "needs the project folder to look for onBackPressed() and KEYCODE_BACK", optOutNote);
   }
+  // A file is excused when it declares an activity that opted out (or, with an app-level opt-out,
+  // any class that isn't an activity opting back in).
+  const excused = (classes: DeclaredClass[]): boolean => {
+    const matched = (list: ManifestComponent[]) => classes.some((c) => list.some((a) => activityMatches(a, c)));
+    if (matched(activityOptIns)) return false;
+    if (matched(activityOptOuts)) return true;
+    return appOptOut;
+  };
   const hits: string[] = [];
+  const skipped: string[] = [];
   for (const f of ctx.sources()) {
     for (const [re, what] of BACK_PATTERNS) {
       if (re.test(f.text)) {
-        hits.push(`${f.name}: ${what}`);
+        if (excused(declaredClasses(f.text))) skipped.push(f.name);
+        else hits.push(`${f.name}: ${what}`);
         break;
       }
     }
   }
-  if (!hits.length) return result("predictive-back", "pass", "no onBackPressed() overrides or KEYCODE_BACK handling found");
+  const notes = [
+    ...optOutNote,
+    ...(skipped.length ? [`Not counted, because their activity opts out: ${cap(skipped, 3).join(", ")}`] : []),
+  ];
+  if (!hits.length) {
+    if (skipped.length) {
+      return result("predictive-back", "info", 'the only old back API uses are in activities that opt out with enableOnBackInvokedCallback="false". This is temporary, so plan the move to OnBackPressedCallback', notes);
+    }
+    return result("predictive-back", "pass", "no onBackPressed() overrides or KEYCODE_BACK handling found", notes);
+  }
   if (t >= 36) {
     return result(
       "predictive-back",
       "warn",
       `${hits.length} ${hits.length === 1 ? "file uses" : "files use"} the old back APIs. On Android 16 with target 36 they aren't called${assumedNote(ctx)}`,
-      [...cap(hits), "Move to OnBackPressedCallback (androidx.activity) or OnBackInvokedCallback."],
+      [...cap(hits), "Move to OnBackPressedCallback (androidx.activity) or OnBackInvokedCallback.", ...notes],
     );
   }
-  return result("predictive-back", "warn", `${hits.length} ${hits.length === 1 ? "file uses" : "files use"} the old back APIs, which stop being called once you target 36`, cap(hits));
+  return result("predictive-back", "warn", `${hits.length} ${hits.length === 1 ? "file uses" : "files use"} the old back APIs, which stop being called once you target 36`, [...cap(hits), ...notes]);
 }
 
 function sourceManifestNote(ctx: CheckContext): string[] {

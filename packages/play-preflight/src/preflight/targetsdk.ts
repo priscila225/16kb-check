@@ -10,17 +10,29 @@ export function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, "\n").replace(/(^|[^:"'\\])\/\/.*$/gm, "$1");
 }
 
-const TARGET_LINE = /\btargetSdk(?:Version)?\b(?!Preview)\s*(?:=|\(|:)?\s*([^\n;}]+)/g;
+export type SdkKind = "target" | "min" | "compile";
 
-/** Expression strings for targetSdk declared in a build file, in source order. */
-export function targetSdkExpressions(text: string): string[] {
+const SDK_LINE: Record<SdkKind, RegExp> = {
+  target: /\btargetSdk(?:Version)?\b(?!Preview)\s*(?:=|\(|:)?\s*([^\n;}]+)/g,
+  min: /\bminSdk(?:Version)?\b(?!Preview)\s*(?:=|\(|:)?\s*([^\n;}]+)/g,
+  // compileSdk = 36, compileSdkVersion 36, compileSdkVersion("android-36"), compileSdk { version = release(36) }
+  compile: /\bcompileSdk(?:Version)?\b(?!Preview|Extension|Minor)\s*(?:=|\(|:|\{\s*version\s*=)?\s*([^\n;}]+)/g,
+};
+
+/** Expression strings for targetSdk, minSdk or compileSdk declared in a build file, in source order. */
+export function sdkExpressions(text: string, kind: SdkKind): string[] {
   const out: string[] = [];
-  for (const m of stripComments(text).matchAll(TARGET_LINE)) {
+  for (const m of stripComments(text).matchAll(SDK_LINE[kind])) {
     const expr = m[1].trim();
     if (!expr || expr.startsWith("{")) continue;
     out.push(expr);
   }
   return out;
+}
+
+/** Expression strings for targetSdk declared in a build file, in source order. */
+export function targetSdkExpressions(text: string): string[] {
+  return sdkExpressions(text, "target");
 }
 
 function count(s: string, c: string): number {
@@ -42,6 +54,7 @@ function cleanExpr(expr: string): string {
     e = e.replace(/\s+as\s+(?:int|Integer|String|Int)$/, "").trim();
     if (e.startsWith("(") && e.endsWith(")")) e = e.slice(1, -1).trim();
     e = e.replace(/^["']|["']$/g, "").trim();
+    e = e.replace(/^release\((.*)\)$/, "$1").replace(/^android-(\d{1,3})$/, "$1").trim();
     if (e === before) return e;
   }
 }
@@ -103,8 +116,13 @@ export function evaluateTargetExpr(expr: string, ctx: ResolveContext): { value: 
  * (convention plugins) when exactly one literal value is set there.
  */
 export function resolveTargetSdk(moduleBuild: TextFile | undefined, ctx: ResolveContext, buildLogic: TextFile[]): TargetSdkSource {
+  return resolveSdk("target", moduleBuild, ctx, buildLogic);
+}
+
+/** Same rules as resolveTargetSdk, for targetSdk, minSdk or compileSdk. */
+export function resolveSdk(kind: SdkKind, moduleBuild: TextFile | undefined, ctx: ResolveContext, buildLogic: TextFile[]): TargetSdkSource {
   if (moduleBuild) {
-    const exprs = targetSdkExpressions(moduleBuild.text);
+    const exprs = sdkExpressions(moduleBuild.text, kind);
     for (const expr of exprs) {
       const r = evaluateTargetExpr(expr, ctx);
       if (r) return { value: r.value, from: r.from ? `${moduleBuild.name} via ${r.from}` : moduleBuild.name, expr };
@@ -113,7 +131,7 @@ export function resolveTargetSdk(moduleBuild: TextFile | undefined, ctx: Resolve
   }
   const literal = new Map<number, string>();
   for (const f of buildLogic) {
-    for (const expr of targetSdkExpressions(f.text)) {
+    for (const expr of sdkExpressions(f.text, kind)) {
       const r = evaluateTargetExpr(expr, ctx);
       if (r) literal.set(r.value, f.name);
     }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { utimesSync } from "node:fs";
 import { join } from "node:path";
-import { fixture, one, runJson, byId } from "./helpers/run.ts";
+import { fixture, one, runJson, runText, byId } from "./helpers/run.ts";
 
 test("target-api: phone app below 36 fails, and below 35 says it's hidden from new users", async () => {
   const c = await one("target-phone-34", "target-api");
@@ -180,4 +180,45 @@ test("a fresh merged manifest wins: library-added permissions and the built targ
   assert.ok(stale.json.notes.some((n) => /older than your sources/.test(n)));
   utimesSync(merged, now, now);
   void join;
+});
+
+test("predictive-back: an activity-level opt-out only excuses that activity's file", async () => {
+  const c = await one("back-activity-optout", "predictive-back");
+  assert.equal(c.status, "warn");
+  assert.match(c.detail, /^1 file uses the old back APIs/);
+  assert.ok(c.items.some((i) => i.includes("MainActivity.kt") && i.includes("onBackPressed")));
+  assert.ok(!c.items.some((i) => /SettingsActivity\.kt: overrides/.test(i)), "the opted-out activity isn't counted");
+  assert.ok(c.items.some((i) => /1 activity opts out .*com\.example\.app\.SettingsActivity.*only covers that activity/.test(i)));
+});
+
+test("foreground-services: an untyped service in the app's own source manifest still fails", async () => {
+  const c = await one("fgs-no-type", "foreground-services");
+  assert.equal(c.status, "fail");
+  assert.match(c.detail, /1 is in your own manifest/);
+  assert.match(c.detail, /throws MissingForegroundServiceTypeException/);
+  assert.ok(c.items.some((i) => i.startsWith("dev.example.fixture.UploadService") && i.includes("app/src/main/AndroidManifest.xml")));
+});
+
+test("foreground-services: FOREGROUND_SERVICE with no services at all is a warn, not a fail", async () => {
+  const c = await one("fgs-library-service", "foreground-services");
+  assert.equal(c.status, "warn");
+  assert.match(c.detail, /can crash at runtime/);
+});
+
+test("header: minSdk and compileSdk come from buildSrc constants and the version catalog", async () => {
+  const bs = await runJson([fixture("checks/sdk-buildsrc"), "--offline", "--only", "target-api"]);
+  assert.equal(bs.json.input.targetSdk, 36);
+  assert.equal(bs.json.input.minSdk, 26);
+  assert.equal(bs.json.input.compileSdk, 36);
+  assert.match(bs.json.input.minSdkFrom ?? "", /buildSrc/);
+  const cat = await runJson([fixture("checks/sdk-catalog"), "--offline", "--only", "target-api"]);
+  assert.equal(cat.json.input.minSdk, 23);
+  assert.equal(cat.json.input.compileSdk, 36);
+  assert.equal(cat.json.input.targetSdk, 35);
+  assert.match(cat.json.input.compileSdkFrom ?? "", /version catalog/);
+  const text = await runText([fixture("checks/sdk-catalog"), "--offline", "--only", "target-api"]);
+  assert.match(text.out.split("\n")[0], /targetSdk 35, from .*; minSdk 23; compileSdk 36\)/);
+  const plain = await runJson([fixture("checks/fgs-ok"), "--offline", "--only", "target-api"]);
+  assert.equal(plain.json.input.minSdk, 24);
+  assert.equal(plain.json.input.compileSdk, 36);
 });

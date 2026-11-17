@@ -15,8 +15,12 @@ export type ManifestComponent = {
 export type ManifestPermission = { name: string; maxSdk?: number; file: string };
 
 export type ManifestInfo = {
+  /** The manifest's package attribute, when it has one. */
+  package?: string;
   targetSdk?: number;
   minSdk?: number;
+  /** android:compileSdkVersion (or platformBuildVersionCode) that the build tools stamp on <manifest>. */
+  compileSdk?: number;
   permissions: ManifestPermission[];
   features: string[];
   application: Record<string, string>;
@@ -81,6 +85,8 @@ export function readManifest(doc: XmlElement, file: string): ManifestInfo & { re
   m.files.push(file);
   const manifest = firstChild(doc, "manifest") ?? (doc.name === "manifest" ? doc : undefined);
   if (!manifest) return m;
+  if (manifest.attrs["package"]) m.package = manifest.attrs["package"];
+  m.compileSdk = toInt(manifest.attrs["android:compileSdkVersion"] ?? manifest.attrs["platformBuildVersionCode"]);
   const sdk = firstChild(manifest, "uses-sdk");
   if (sdk) {
     m.targetSdk = toInt(sdk.attrs["android:targetSdkVersion"]);
@@ -126,6 +132,7 @@ export function mergeManifests(parts: (ManifestInfo & { removedPermissions?: str
   for (const p of [...parts].reverse()) {
     if (p.targetSdk !== undefined) out.targetSdk = p.targetSdk;
     if (p.minSdk !== undefined) out.minSdk = p.minSdk;
+    if (p.compileSdk !== undefined) out.compileSdk = p.compileSdk;
     Object.assign(out.application, p.application);
     Object.assign(out.appProperties, p.appProperties);
     Object.assign(out.appMetaData, p.appMetaData);
@@ -143,6 +150,24 @@ export function mergeManifests(parts: (ManifestInfo & { removedPermissions?: str
     out.files.push(...p.files);
   }
   return out;
+}
+
+/** Resolve a component name like ".Foo" or "Foo" against a package. Leaves it as is when there's no package. */
+export function qualifyName(name: string, pkg: string | undefined): string {
+  if (!pkg) return name;
+  if (name.startsWith(".")) return pkg + name;
+  if (!name.includes(".")) return `${pkg}.${name}`;
+  return name;
+}
+
+/**
+ * Does a component name from a merged or APK manifest (fully qualified) match one from a source
+ * manifest? Unresolved relative source names (".Foo") match on the trailing class name.
+ */
+export function sameComponent(full: string, source: string): boolean {
+  if (full === source) return true;
+  if (source.startsWith(".")) return full.endsWith(source);
+  return false;
 }
 
 export function hasPermission(m: ManifestInfo, name: string): ManifestPermission | undefined {

@@ -7,8 +7,8 @@ import { parseVersionCatalog } from "../sixteenkb/check/toml";
 import { classifyBuildFile, includedBuildDirs } from "../sixteenkb/check/modules";
 import type { ParseResult, VersionCatalog } from "../sixteenkb/check/types";
 import { parseXml } from "./xml";
-import { mergeManifests, readManifest, type ManifestInfo } from "./manifest";
-import { parseProperties, resolveTargetSdk, stripComments, type TargetSdkSource, type TextFile } from "./targetsdk";
+import { mergeManifests, qualifyName, readManifest, type ManifestInfo } from "./manifest";
+import { parseProperties, resolveSdk, resolveTargetSdk, stripComments, type TargetSdkSource, type TextFile } from "./targetsdk";
 
 /** Everything here is read from disk and stays in this process. */
 export type ThemeOptOut = { file: string; value: string };
@@ -19,7 +19,15 @@ export type ProjectScan = {
   appModules: string[];
   parsed: ParseResult;
   target: TargetSdkSource;
+  minSdk: TargetSdkSource;
+  compileSdk: TargetSdkSource;
   manifest?: ManifestInfo;
+  /**
+   * The project's own source manifests (app and in-project modules), with component names
+   * qualified where the namespace is known. Used to tell the app's components from ones a
+   * dependency adds in the merged manifest or APK.
+   */
+  ownManifest?: ManifestInfo;
   manifestKind: "merged" | "source" | "none";
   manifestNote?: string;
   edgeToEdgeOptOuts: ThemeOptOut[];
@@ -195,6 +203,8 @@ export function scanProject(start: string, opts: ScanOptions = {}): ProjectScan 
   ];
   const ctx = { catalogVersions: catalog?.versions ?? {}, gradleProperties, sharedFiles: shared };
   const target = appModule !== undefined ? resolveTargetSdk(moduleBuild.get(appModule), ctx, buildLogic) : {};
+  const minSdk = appModule !== undefined ? resolveSdk("min", moduleBuild.get(appModule), ctx, buildLogic) : {};
+  const compileSdk = appModule !== undefined ? resolveSdk("compile", moduleBuild.get(appModule), ctx, buildLogic) : {};
 
   // Manifest: a fresh merged manifest from a previous build wins; otherwise source manifests.
   const manifestModules = appModule !== undefined ? [appModule, ...libraryModules.filter((m) => m !== appModule)] : libraryModules;
@@ -214,6 +224,20 @@ export function scanProject(start: string, opts: ScanOptions = {}): ProjectScan 
     const mb = manifestModules.findIndex((m) => b.startsWith(join(root, m) + sep) || m === "");
     return ma - mb || Number(!a.includes(`${sep}main${sep}`)) - Number(!b.includes(`${sep}main${sep}`));
   });
+  const namespaceOf = (p: string): string | undefined => {
+    const m = manifestModules
+      .filter((mod) => mod === "" || p.startsWith(join(root, mod) + sep))
+      .sort((a, b) => b.length - a.length)[0];
+    const build = m !== undefined ? moduleBuild.get(m) : undefined;
+    return build ? /\bnamespace\s*=?\s*["']([\w.]+)["']/.exec(stripComments(build.text))?.[1] : undefined;
+  };
+  const sourceParts = sourceManifestPaths.map((p) => {
+    const part = readManifest(parseXml(safeRead(p) ?? ""), rel(root, p));
+    const pkg = namespaceOf(p) ?? part.package;
+    const qualify = (c: ManifestInfo["activities"][number]) => ({ ...c, name: qualifyName(c.name, pkg) });
+    return { ...part, activities: part.activities.map(qualify), services: part.services.map(qualify), receivers: part.receivers.map(qualify) };
+  });
+  const ownManifest = sourceParts.length ? mergeManifests(sourceParts) : undefined;
   const merged = appModule !== undefined ? findMergedManifest(join(root, appModule)) : undefined;
   if (merged) {
     const appInputs = [...sourceManifestPaths, ...(moduleBuild.get(appModule!) ? [join(root, moduleBuild.get(appModule!)!.name)] : [])];
@@ -227,9 +251,8 @@ export function scanProject(start: string, opts: ScanOptions = {}): ProjectScan 
       manifestNote = "The merged manifest in build/ is older than your sources, so it was ignored. Rebuild for library-added permissions.";
     }
   }
-  if (!manifest && sourceManifestPaths.length) {
-    const parts = sourceManifestPaths.map((p) => readManifest(parseXml(safeRead(p) ?? ""), rel(root, p)));
-    manifest = mergeManifests(parts);
+  if (!manifest && ownManifest) {
+    manifest = ownManifest;
     manifestKind = "source";
     manifestNote =
       manifestNote ??
@@ -239,6 +262,9 @@ export function scanProject(start: string, opts: ScanOptions = {}): ProjectScan 
     Object.assign(target, { value: manifest.targetSdk, from: manifest.files[0] });
   } else if (manifest && manifestKind === "merged" && manifest.targetSdk !== undefined) {
     Object.assign(target, { value: manifest.targetSdk, from: manifest.files[0] });
+  }
+  if (manifest?.minSdk !== undefined && (minSdk.value === undefined || manifestKind === "merged")) {
+    Object.assign(minSdk, { value: manifest.minSdk, from: manifest.files[0] });
   }
 
   // Theme flags: res/values*/ XML in the app and its library modules.
@@ -281,7 +307,10 @@ export function scanProject(start: string, opts: ScanOptions = {}): ProjectScan 
     appModules,
     parsed,
     target,
+    minSdk,
+    compileSdk,
     manifest,
+    ownManifest,
     manifestKind,
     manifestNote,
     edgeToEdgeOptOuts,

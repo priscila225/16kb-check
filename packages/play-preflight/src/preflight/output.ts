@@ -5,6 +5,10 @@ export type Header = {
   binary?: string;
   targetSdk?: number;
   targetFrom?: string;
+  minSdk?: number;
+  minSdkFrom?: string;
+  compileSdk?: number;
+  compileSdkFrom?: string;
   formFactor: string;
   manifestKind: string;
 };
@@ -39,7 +43,11 @@ export function formatCheckText(input: {
   const tgt =
     header.targetSdk !== undefined ? `targetSdk ${header.targetSdk}${header.targetFrom ? `, from ${header.targetFrom}` : ""}` : "targetSdk not resolved";
   const ff = header.formFactor !== "phone" ? `, ${header.formFactor}` : "";
-  const lines: string[] = [`play-preflight check  ·  ${what} (${tgt}${ff})`, ""];
+  const sdks = [
+    header.minSdk !== undefined ? `; minSdk ${header.minSdk}` : "",
+    header.compileSdk !== undefined ? `; compileSdk ${header.compileSdk}` : "",
+  ].join("");
+  const lines: string[] = [`play-preflight check  ·  ${what} (${tgt}${sdks}${ff})`, ""];
   const titleW = Math.max(...results.map((r) => r.title.length), 10) + 2;
   for (const r of results) {
     lines.push(`${paint(color, COLOR[r.status], LABEL[r.status])}  ${r.title.padEnd(titleW)}${r.detail}`);
