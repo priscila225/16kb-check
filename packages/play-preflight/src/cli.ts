@@ -11,8 +11,8 @@ Usage:
 
 Run "npx play-preflight check --help" or "npx play-preflight 16kb --help" for options.
 
-Everything runs on this machine. Only public SDK names are looked up on devbooth.dev,
-and --offline skips that too.
+Everything runs on this machine. Only public SDK names are looked up on devbooth.dev.
+--no-submit downloads the public list but sends nothing. --offline skips the network too.
 
   https://devbooth.dev/cli
 `;

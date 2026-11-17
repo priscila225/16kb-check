@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { findProjectRoot } from "../sixteenkb/discover";
 import { VERSION } from "../version";
-import { resolveAgainstCatalog } from "../sixteenkb/cli";
+import { envNoSubmit, resolveAgainstCatalog } from "../sixteenkb/cli";
 import { createClient, type ApiClient } from "../sixteenkb/api";
 import { checkAgp, type AgpCheck } from "../sixteenkb/check/agp";
 import type { CatalogEntry } from "../sixteenkb/check/types";
@@ -31,6 +31,8 @@ Output:
   --only <ids>          Run only these checks (comma separated)
   --skip <ids>          Skip these checks (comma separated)
   --offline             No network at all. Skips the public SDK lookup
+  --no-submit           Download the public SDK list, but never send unknown SDK names
+  --no-auto-check       Same as --no-submit
   --no-color            Disable color
   --help                Show this help
 
@@ -42,6 +44,8 @@ Privacy:
   lookup on devbooth.dev, which sends public Maven group:artifact names after
   private and internal ones (including com.github.* and JitPack) are dropped
   here. Your targetSdk, permissions, package name and files are never sent.
+  --no-submit (or PLAY_PREFLIGHT_NO_SUBMIT=1) still downloads the list, but
+  never sends unknown SDK names. --offline skips the network completely.
 
   https://devbooth.dev/cli
 `;
@@ -57,6 +61,7 @@ export type CheckOptions = {
   only?: CheckId[];
   skip: CheckId[];
   offline: boolean;
+  noSubmit: boolean;
   color: boolean | "auto";
   help: boolean;
 };
@@ -69,7 +74,7 @@ function parseIds(v: string | undefined, flag: string): CheckId[] | undefined {
   return ids as CheckId[];
 }
 
-export function parseCheckArgv(argv: string[]): CheckOptions {
+export function parseCheckArgv(argv: string[], env: NodeJS.ProcessEnv = process.env): CheckOptions {
   const { values, positionals } = parseArgs({
     args: argv,
     options: {
@@ -83,6 +88,8 @@ export function parseCheckArgv(argv: string[]): CheckOptions {
       only: { type: "string" },
       skip: { type: "string" },
       offline: { type: "boolean", default: false },
+      "no-submit": { type: "boolean", default: false },
+      "no-auto-check": { type: "boolean", default: false },
       "no-color": { type: "boolean", default: false },
       help: { type: "boolean", default: false, short: "h" },
     },
@@ -106,6 +113,7 @@ export function parseCheckArgv(argv: string[]): CheckOptions {
     only: parseIds(values.only, "--only"),
     skip: parseIds(values.skip, "--skip") ?? [],
     offline: !!values.offline,
+    noSubmit: !!values["no-submit"] || !!values["no-auto-check"] || envNoSubmit(env),
     color: values["no-color"] ? false : "auto",
     help: !!values.help,
   };
@@ -119,6 +127,7 @@ export type CheckIo = {
   catalog?: CatalogEntry[];
   enqueue?: boolean;
   now?: Date;
+  env?: NodeJS.ProcessEnv;
 };
 
 export type CheckRunResult = {
@@ -148,7 +157,7 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
   const empty = { results: [], counts: countStatuses([]) };
   let opts: CheckOptions;
   try {
-    opts = parseCheckArgv(argv);
+    opts = parseCheckArgv(argv, io.env);
   } catch (e) {
     io.stderr.write(`${e instanceof Error ? e.message : String(e)}\n\n${CHECK_HELP}`);
     return { exitCode: 2, ...empty };
@@ -228,7 +237,7 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
       const res = await resolveAgainstCatalog(project.parsed, {
         client: io.api ?? createClient(),
         catalog: io.catalog,
-        enqueue: io.enqueue,
+        enqueue: opts.noSubmit ? false : io.enqueue,
         stderr: { write: (s: string) => void errors.push(s.trim()) },
       });
       sdk = res.ok ? { status: "ok", report: res.report, skippedPrivate: res.skippedPrivate } : { status: "error", message: errors[0] ?? "unknown error" };
@@ -273,6 +282,7 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
   };
   const privacy = {
     offline: opts.offline,
+    noSubmit: opts.noSubmit && !opts.offline,
     lookedUp: sdk.status === "ok",
     skippedPrivate: sdk.status === "ok" ? sdk.skippedPrivate : 0,
   };

@@ -41,7 +41,7 @@ export type JsonOut = {
   checks: JsonCheck[];
   summary: Record<string, number>;
   notes: string[];
-  privacy: { offline: boolean; lookedUp: boolean; skippedPrivate: number };
+  privacy: { offline: boolean; noSubmit?: boolean; lookedUp: boolean; skippedPrivate: number };
   exitCode: number;
 };
 

@@ -19,40 +19,55 @@ Usage:
   npx play-preflight 16kb [options]
 
 Options:
-  --path <dir>   Project root (default: current directory)
-  --json         Print JSON instead of a table
-  --ci           Exit 1 if any library is not ready or only partially ready
-  --no-color     Disable color
-  --help         Show this help
-  --version      Print the version
+  --path <dir>         Project root (default: current directory)
+  --json               Print JSON instead of a table
+  --ci                 Exit 1 if any library is not ready or only partially ready
+  --no-submit          Download the public SDK list, but never send unknown SDK names
+  --no-auto-check      Same as --no-submit
+  --no-color           Disable color
+  --help               Show this help
+  --version            Print the version
 
 Privacy:
   Your Gradle and TOML files stay on this machine. Private and internal
   libraries (including com.github.* and JitPack) are filtered out locally
   and are never sent to devbooth.dev. Only public Maven coordinates are looked
   up, and only public version strings are sent when a public SDK is not
-  in the database yet.
+  in the database yet. --no-submit (or PLAY_PREFLIGHT_NO_SUBMIT=1) still
+  downloads the public list, but never sends unknown SDK names.
 
   https://devbooth.dev/16kb
 `;
+
+export const NO_SUBMIT_LINE = "Downloaded the public SDK list. Sent nothing.";
+
+/** True when PLAY_PREFLIGHT_NO_SUBMIT is set to a truthy value (1, true, yes). */
+export function envNoSubmit(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = env.PLAY_PREFLIGHT_NO_SUBMIT?.trim();
+  if (!v) return false;
+  return !["0", "false", "no", "off"].includes(v.toLowerCase());
+}
 
 export type CliOptions = {
   path: string;
   json: boolean;
   ci: boolean;
+  noSubmit: boolean;
   color: ColorMode;
   help: boolean;
   version: boolean;
   deep: boolean;
 };
 
-export function parseArgv(argv: string[]): CliOptions {
+export function parseArgv(argv: string[], env: NodeJS.ProcessEnv = process.env): CliOptions {
   const { values } = parseArgs({
     args: argv,
     options: {
       path: { type: "string" },
       json: { type: "boolean", default: false },
       ci: { type: "boolean", default: false },
+      "no-submit": { type: "boolean", default: false },
+      "no-auto-check": { type: "boolean", default: false },
       "no-color": { type: "boolean", default: false },
       help: { type: "boolean", default: false, short: "h" },
       version: { type: "boolean", default: false, short: "v" },
@@ -65,6 +80,7 @@ export function parseArgv(argv: string[]): CliOptions {
     path: values.path || process.cwd(),
     json: !!values.json,
     ci: !!values.ci,
+    noSubmit: !!values["no-submit"] || !!values["no-auto-check"] || envNoSubmit(env),
     color: values["no-color"] ? "never" : "auto",
     help: !!values.help,
     version: !!values.version,
@@ -78,6 +94,7 @@ export type RunIo = {
   api?: ApiClient;
   catalog?: CatalogEntry[];
   enqueue?: boolean;
+  env?: NodeJS.ProcessEnv;
 };
 
 export type RunResult = {
@@ -89,7 +106,7 @@ export type RunResult = {
 export async function run(argv: string[], io: RunIo = { stdout: process.stdout, stderr: process.stderr }): Promise<RunResult> {
   let opts: CliOptions;
   try {
-    opts = parseArgv(argv);
+    opts = parseArgv(argv, io.env);
   } catch (e) {
     io.stderr.write(`${e instanceof Error ? e.message : String(e)}\n\n${HELP}`);
     return { exitCode: 2, skippedPrivate: 0 };
@@ -116,7 +133,12 @@ export async function run(argv: string[], io: RunIo = { stdout: process.stdout, 
   const parsed = parseProjectFiles(discovered.files);
 
   const client = io.api || createClient();
-  const resolved = await resolveAgainstCatalog(parsed, { client, catalog: io.catalog, enqueue: io.enqueue, stderr: io.stderr });
+  const resolved = await resolveAgainstCatalog(parsed, {
+    client,
+    catalog: io.catalog,
+    enqueue: opts.noSubmit ? false : io.enqueue,
+    stderr: io.stderr,
+  });
   if (!resolved.ok) return { exitCode: 2, skippedPrivate: 0 };
   const { report, skippedPrivate, catalogGroups } = resolved;
   const extras = buildExtras(parsed.plugins, parsed.testDependencies.length, parsed.buildToolingDependencies.length, catalogGroups);
@@ -127,6 +149,11 @@ export async function run(argv: string[], io: RunIo = { stdout: process.stdout, 
     io.stdout.write(JSON.stringify(toJson(report, skippedPrivate, extras), null, 2) + "\n");
   } else {
     io.stdout.write(formatTable(report, skippedPrivate, color, extras));
+  }
+  // Only when we actually downloaded the catalog (not a test-injected copy) and sent nothing.
+  if (opts.noSubmit && !io.catalog) {
+    if (opts.json) io.stderr.write(`${NO_SUBMIT_LINE}\n`);
+    else io.stdout.write(`${NO_SUBMIT_LINE}\n`);
   }
 
   const exitCode = opts.ci && ciShouldFail(report) ? 1 : 0;
@@ -165,8 +192,8 @@ export type CatalogResolution =
 
 /**
  * The only network step: download the public catalog, drop private and internal coordinates on
- * this machine, and ask devbooth.dev to auto-check public SDKs it doesn't know yet.
- * Shared by `play-preflight 16kb` and `play-preflight check`.
+ * this machine, and (unless enqueue is false) ask devbooth.dev to auto-check public SDKs it
+ * doesn't know yet. Shared by `play-preflight 16kb` and `play-preflight check`.
  */
 export async function resolveAgainstCatalog(
   parsed: ParseResult,

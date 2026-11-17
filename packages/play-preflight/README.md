@@ -114,6 +114,9 @@ npx play-preflight check --skip account-deletion
 # No network at all
 npx play-preflight check --offline
 
+# Download the public SDK list, but never send unknown SDK names
+npx play-preflight check --no-submit
+
 # The old 16 KB SDK table (what 16kb-check did)
 npx play-preflight 16kb
 ```
@@ -129,6 +132,7 @@ npx play-preflight 16kb
 | `--strict` | Exit 1 on WARN too |
 | `--only <ids>` / `--skip <ids>` | Comma-separated check ids |
 | `--offline` | Skip the SDK lookup. Every other check is already local |
+| `--no-submit`, `--no-auto-check` | Download the public SDK list, but never send unknown SDK names. Same as `PLAY_PREFLIGHT_NO_SUBMIT=1` |
 | `--no-color` | Plain output |
 
 Exit codes: `0` no failures, `1` at least one FAIL (or WARN with `--strict`), `2` bad input.
@@ -174,11 +178,12 @@ The only network call is the public SDK lookup used by the `16kb` check:
 - Private and internal libraries are dropped on your machine first, including `com.github.*`, JitPack, `project(...)` modules and anything that isn't a known public Maven group. They're never printed or sent, only counted.
 - If a public SDK isn't in the catalog yet, its public `group:artifact` name (and public version string) is sent so the site can check it.
 - Your targetSdk, permissions, package name, module names and file contents are never sent.
+- `--no-submit` (or `--no-auto-check`, or `PLAY_PREFLIGHT_NO_SUBMIT=1`) still downloads the catalog, but never sends unknown SDK names. The run ends with "Downloaded the public SDK list. Sent nothing."
 - `--offline` skips the lookup completely.
 
 ## The `16kb` command
 
-`npx play-preflight 16kb` is the full 16 KB SDK table that `16kb-check` printed, with the same options (`--path`, `--json`, `--ci`, `--no-color`). It lists every public SDK you declared with its 16 KB status and the minimum ready version.
+`npx play-preflight 16kb` is the full 16 KB SDK table that `16kb-check` printed, with the same options (`--path`, `--json`, `--ci`, `--no-color`, plus `--no-submit`). It lists every public SDK you declared with its 16 KB status and the minimum ready version.
 
 ## License
 

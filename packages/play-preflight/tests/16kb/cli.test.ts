@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { HELP, parseArgv, run } from "../../src/sixteenkb/cli.ts";
+import { createClient } from "../../src/sixteenkb/api.ts";
+import { HELP, NO_SUBMIT_LINE, parseArgv, run } from "../../src/sixteenkb/cli.ts";
 import { VERSION } from "../../src/sixteenkb/version.ts";
 import { ciShouldFail } from "../../src/sixteenkb/report.ts";
 import { DEADLINE_NOTE } from "../../src/sixteenkb/status.ts";
@@ -52,11 +53,16 @@ async function capture(argv: string[]) {
 }
 
 test("parseArgv reads flags", () => {
-  const o = parseArgv(["--path", "/tmp/app", "--json", "--ci", "--no-color"]);
+  const o = parseArgv(["--path", "/tmp/app", "--json", "--ci", "--no-color"], {});
   assert.equal(o.path, "/tmp/app");
   assert.equal(o.json, true);
   assert.equal(o.ci, true);
   assert.equal(o.color, "never");
+  assert.equal(o.noSubmit, false);
+  assert.equal(parseArgv(["--no-submit"], {}).noSubmit, true);
+  assert.equal(parseArgv(["--no-auto-check"], {}).noSubmit, true);
+  assert.equal(parseArgv([], { PLAY_PREFLIGHT_NO_SUBMIT: "1" }).noSubmit, true);
+  assert.equal(parseArgv([], { PLAY_PREFLIGHT_NO_SUBMIT: "0" }).noSubmit, false);
 });
 
 test("--help and --version", async () => {
@@ -180,6 +186,66 @@ test("a still-checking library shows the settling note in text and JSON", async 
   const body = JSON.parse(out);
   assert.equal(body.settling, true);
   assert.match(body.notes[0], /still settling/);
+});
+
+type Call = { url: string; method: string; body: string };
+
+function spyClient(calls: Call[]) {
+  return createClient({
+    baseUrl: "https://devbooth.test",
+    fetch: (async (url: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+      if (String(url).includes("/api/catalog")) {
+        return new Response(JSON.stringify({ ok: true, count: 0, entries: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true, accepted: 0, jobs: [] }), { status: 200 });
+    }) as typeof fetch,
+  });
+}
+
+async function runWithSpy(argv: string[], extra: { env?: NodeJS.ProcessEnv } = {}) {
+  const calls: Call[] = [];
+  let out = "";
+  let err = "";
+  const result = await run(argv, {
+    stdout: { write: (s) => { out += s; }, isTTY: false },
+    stderr: { write: (s) => { err += s; }, isTTY: false },
+    api: spyClient(calls),
+    env: extra.env ?? {},
+  });
+  return { result, out, err, calls };
+}
+
+test("16kb without --no-submit POSTs unknown public SDKs to check-demand", async () => {
+  const { calls } = await runWithSpy(["--path", fixture, "--json"]);
+  const posts = calls.filter((c) => c.method === "POST");
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, "https://devbooth.test/api/check-demand");
+  assert.match(posts[0].body, /io\.sentry:sentry-android/);
+  assert.doesNotMatch(posts[0].body, /acme-internal|secret-kit|com\.github/);
+  assert.ok(calls.some((c) => c.method === "GET" && c.url.includes("/api/catalog")));
+});
+
+test("16kb --no-submit downloads the catalog and never POSTs, even with unknown public SDKs", async () => {
+  const { result, out, calls } = await runWithSpy(["--path", fixture, "--no-color", "--no-submit"]);
+  assert.equal(result.exitCode, 0);
+  assert.equal(calls.length, 1, JSON.stringify(calls));
+  assert.equal(calls[0].method, "GET");
+  assert.ok(calls[0].url.startsWith("https://devbooth.test/api/catalog"), calls[0].url);
+  assert.ok(!calls.some((c) => c.method === "POST" || c.url.includes("check-demand")));
+  assert.ok(out.trimEnd().endsWith(NO_SUBMIT_LINE), out);
+});
+
+test("16kb --no-auto-check and PLAY_PREFLIGHT_NO_SUBMIT=1 also skip the POST", async () => {
+  const alias = await runWithSpy(["--path", fixture, "--json", "--no-auto-check"]);
+  assert.equal(alias.calls.length, 1);
+  assert.equal(alias.calls[0].method, "GET");
+  assert.ok(!alias.calls.some((c) => c.method === "POST"));
+  const env = await runWithSpy(["--path", fixture, "--no-color"], { env: { PLAY_PREFLIGHT_NO_SUBMIT: "1" } });
+  assert.equal(env.calls.length, 1);
+  assert.equal(env.calls[0].method, "GET");
+  assert.ok(!env.calls.some((c) => c.method === "POST"));
+  assert.ok(env.out.trimEnd().endsWith(NO_SUBMIT_LINE), env.out);
 });
 
 test("unknown flags and a missing project fail with exit 2", async () => {

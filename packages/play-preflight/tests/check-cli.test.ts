@@ -8,22 +8,27 @@ import { run as run16kb } from "../src/sixteenkb/cli.ts";
 import { main, HELP } from "../src/cli.ts";
 import { VERSION } from "../src/version.ts";
 import { CHECK_IDS } from "../src/preflight/rules.ts";
+import { parseCheckArgv } from "../src/preflight/run.ts";
+import { NO_SUBMIT_LINE } from "../src/sixteenkb/cli.ts";
 import { CATALOG, byId, fixture, runJson, runText } from "./helpers/run.ts";
 
 type Call = { url: string; method: string; body: string };
 
-function spyClient(calls: Call[]) {
+function spyClient(calls: Call[], entries = CATALOG) {
   return createClient({
     baseUrl: "https://devbooth.test",
     fetch: (async (url: string | URL, init?: RequestInit) => {
       calls.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
       if (String(url).includes("/api/catalog")) {
-        return new Response(JSON.stringify({ ok: true, count: CATALOG.length, entries: CATALOG }), { status: 200 });
+        return new Response(JSON.stringify({ ok: true, count: entries.length, entries }), { status: 200 });
       }
       return new Response(JSON.stringify({ ok: true, accepted: 0, jobs: [] }), { status: 200 });
     }) as typeof fetch,
   });
 }
+
+/** Empty catalog so public deps like io.sentry:sentry-android are treated as unknown. */
+const UNKNOWN_PUBLIC_CATALOG: typeof CATALOG = [];
 
 test("ready app: everything passes or doesn't apply, exit 0", async () => {
   const { exitCode, json } = await runJson([fixture("ready-app")], { catalog: CATALOG, enqueue: false });
@@ -102,6 +107,62 @@ test("--offline makes no network calls at all", async () => {
   assert.equal(calls.length, 0);
   assert.equal(json.privacy.offline, true);
   assert.ok(byId(json)["16kb"].items.includes("SDK lookup skipped (--offline)."));
+});
+
+test("parseCheckArgv: --no-submit, --no-auto-check, and PLAY_PREFLIGHT_NO_SUBMIT", () => {
+  assert.equal(parseCheckArgv([], {}).noSubmit, false);
+  assert.equal(parseCheckArgv(["--no-submit"], {}).noSubmit, true);
+  assert.equal(parseCheckArgv(["--no-auto-check"], {}).noSubmit, true);
+  assert.equal(parseCheckArgv([], { PLAY_PREFLIGHT_NO_SUBMIT: "1" }).noSubmit, true);
+  assert.equal(parseCheckArgv([], { PLAY_PREFLIGHT_NO_SUBMIT: "true" }).noSubmit, true);
+  assert.equal(parseCheckArgv([], { PLAY_PREFLIGHT_NO_SUBMIT: "0" }).noSubmit, false);
+  assert.equal(parseCheckArgv(["--offline", "--no-submit"]).offline, true);
+  assert.equal(parseCheckArgv(["--offline", "--no-submit"]).noSubmit, true);
+});
+
+test("without --no-submit, unknown public SDKs are POSTed to check-demand", async () => {
+  const calls: Call[] = [];
+  await runJson([fixture("legacy-app")], { api: spyClient(calls, UNKNOWN_PUBLIC_CATALOG), env: {} });
+  const posts = calls.filter((c) => c.method === "POST");
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, "https://devbooth.test/api/check-demand");
+  assert.match(posts[0].body, /io\.sentry:sentry-android/);
+  assert.doesNotMatch(posts[0].body, /acme-internal|secret-kit|com\.github/);
+  assert.ok(calls.some((c) => c.method === "GET" && c.url.includes("/api/catalog")));
+});
+
+async function assertNoSubmit(args: string[], extra: Parameters<typeof runJson>[1] = {}) {
+  const calls: Call[] = [];
+  const { json, exitCode } = await runJson([fixture("legacy-app"), ...args], {
+    api: spyClient(calls, UNKNOWN_PUBLIC_CATALOG),
+    ...extra,
+  });
+  assert.equal(exitCode, 1);
+  assert.equal(calls.length, 1, JSON.stringify(calls));
+  assert.equal(calls[0].method, "GET");
+  assert.ok(calls[0].url.startsWith("https://devbooth.test/api/catalog"), calls[0].url);
+  assert.ok(!calls.some((c) => c.method === "POST" || c.url.includes("check-demand")));
+  assert.equal(json.privacy.noSubmit, true);
+  assert.equal(json.privacy.offline, false);
+  assert.equal(json.privacy.lookedUp, true);
+  const text = await runText([fixture("legacy-app"), "--no-color", ...args], {
+    api: spyClient([], UNKNOWN_PUBLIC_CATALOG),
+    ...extra,
+  });
+  assert.ok(text.out.trimEnd().endsWith(NO_SUBMIT_LINE), text.out);
+  return { json, calls };
+}
+
+test("--no-submit downloads the catalog and never POSTs, even with unknown public SDKs", async () => {
+  await assertNoSubmit(["--no-submit"]);
+});
+
+test("--no-auto-check is an alias of --no-submit", async () => {
+  await assertNoSubmit(["--no-auto-check"]);
+});
+
+test("PLAY_PREFLIGHT_NO_SUBMIT=1 is the same as --no-submit", async () => {
+  await assertNoSubmit([], { env: { PLAY_PREFLIGHT_NO_SUBMIT: "1" } });
 });
 
 test("privacy: only public SDK names leave the machine; never targetSdk, permissions, package or private coordinates", async () => {
@@ -231,4 +292,7 @@ test("dispatcher: default command is check, --version, help, unknown command", a
   const ch = capture();
   assert.equal(await main(["check", "--help"], ch.io), 0);
   assert.match(ch.out, /--offline/);
+  assert.match(ch.out, /--no-submit/);
+  assert.match(ch.out, /--no-auto-check/);
+  assert.match(ch.out, /PLAY_PREFLIGHT_NO_SUBMIT/);
 });
