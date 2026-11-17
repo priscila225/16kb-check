@@ -1,7 +1,7 @@
 import { RULES, fmtDate, type CheckId } from "./rules";
 import { pkgPath, formatVersion, isAllZeroVersion, manifestGet, type ManifestInfo } from "./manifest";
 import { readImage, formatSize } from "./image";
-import { findMainEntries, findMainWithoutArgs, hasMatch, searchSources, at, type SourceHit, type TextFile } from "./source";
+import { findMainEntries, findMainWithoutArgs, hasMatch, searchSources, at, isVendoredPath, type SourceHit, type TextFile } from "./source";
 import type { ProjectScan } from "./project";
 import type { ResolvedRokuRules, RokuRulesChecks } from "./roku-rules";
 import { isoCmp, isoDay } from "./roku-rules";
@@ -62,10 +62,22 @@ function locsFromHits(hits: SourceHit[], message: string): CheckLocation[] {
 }
 
 function itemHits(hits: SourceHit[], cap = 8): string[] {
-  const shown = hits.slice(0, cap).map((h) => `${h.excerpt}  ${at(h)}`);
+  const shown = hits.slice(0, cap).map((h) => h.excerpt);
   if (hits.length > cap) shown.push(`…and ${hits.length - cap} more`);
   return shown;
 }
+
+function partitionHits(hits: SourceHit[]): { app: SourceHit[]; vendor: SourceHit[] } {
+  const app: SourceHit[] = [];
+  const vendor: SourceHit[] = [];
+  for (const h of hits) (isVendoredPath(h.file) ? vendor : app).push(h);
+  return { app, vendor };
+}
+
+function vendoredItem(name: string): string {
+  return `${name} was found in vendored code. The fix is usually updating the vendor SDK`;
+}
+
 
 function todayIso(now: Date): string {
   return isoDay(now);
@@ -73,7 +85,7 @@ function todayIso(now: Date): string {
 
 // --- manifest-required ---
 
-const APP_REQUIRED = ["title", "major_version", "minor_version", "build_version", "mm_icon_focus_fhd", "mm_icon_focus_hd", "splash_screen_hd"] as const;
+const APP_REQUIRED = ["title", "major_version", "minor_version", "build_version"] as const;
 const SCREENSAVER_REQUIRED = ["screensaver_title", "major_version", "minor_version", "build_version"] as const;
 
 function checkManifestRequired(ctx: CheckContext): CheckResult {
@@ -88,26 +100,8 @@ function checkManifestRequired(ctx: CheckContext): CheckResult {
       locations.push({ file: m.file, message: `Missing ${key}` });
     }
   }
-  // Cert 6.4 also requires the FHD splash, even though the manifest doc lists it as optional.
-  if (!ctx.project.screensaver && !manifestGet(m, "splash_screen_fhd")) {
-    missing.push("splash_screen_fhd");
-    locations.push({ file: m.file, message: "Missing splash_screen_fhd (required by certification criterion 6.4)" });
-  }
-  const pathKeys = ctx.project.screensaver
-    ? []
-    : ["mm_icon_focus_fhd", "mm_icon_focus_hd", "splash_screen_fhd", "splash_screen_hd", "splash_screen_sd"];
-  for (const key of pathKeys) {
-    const value = manifestGet(m, key);
-    if (!value) continue;
-    const rel = pkgPath(value);
-    if (!rel) {
-      items.push(`${key} should use a pkg:/ path (got ${value})`);
-      locations.push({ file: m.file, line: m.lines[key], message: `${key} should use a pkg:/ path` });
-    } else if (!ctx.project.readFile(rel)) {
-      items.push(`${key} points to ${value}, which is not in the package`);
-      locations.push({ file: m.file, line: m.lines[key], message: `${key} path does not exist: ${value}` });
-    }
-  }
+  // Icon and splash fields are owned by the artwork check so a missing
+  // recommended FHD icon is not reported twice.
   if (!m.trailingNewline) {
     items.push("The last line of the manifest must end with a newline");
     locations.push({ file: m.file, message: "Manifest is missing a trailing newline" });
@@ -120,7 +114,7 @@ function checkManifestRequired(ctx: CheckContext): CheckResult {
       : items[0] ?? "Manifest has problems";
     return result("manifest-required", status, detail, items.filter((i) => !missing.some((k) => i.startsWith(k))), null, { locations });
   }
-  return result("manifest-required", "pass", "Required fields, pkg:/ paths and trailing newline are in place");
+  return result("manifest-required", "pass", "Required fields and trailing newline are in place");
 }
 
 // --- version ---
@@ -170,7 +164,8 @@ function checkRsgVersion(ctx: CheckContext): CheckResult {
 
 // --- artwork ---
 
-type ArtSpec = { key: string; label: string; size: [number, number]; required: boolean };
+type ArtLevel = "required" | "recommended" | "optional";
+type ArtSpec = { key: string; label: string; size: [number, number]; level: ArtLevel };
 
 function checkArtwork(ctx: CheckContext): CheckResult {
   if (ctx.project.screensaver) {
@@ -178,11 +173,13 @@ function checkArtwork(ctx: CheckContext): CheckResult {
   }
   const art = rules(ctx).artwork;
   const specs: ArtSpec[] = [
-    { key: "mm_icon_focus_fhd", label: "FHD icon", size: art.iconFhd, required: true },
-    { key: "mm_icon_focus_hd", label: "HD icon", size: art.iconHd, required: true },
-    { key: "splash_screen_fhd", label: "FHD splash", size: art.splashFhd, required: true },
-    { key: "splash_screen_hd", label: "HD splash", size: art.splashHd, required: true },
-    { key: "splash_screen_sd", label: "SD splash", size: art.splashSd, required: false },
+    // Official example manifests and store apps can ship without mm_icon_focus_fhd.
+    // The required table mentions it, but HD is the field that cert and the store actually need.
+    { key: "mm_icon_focus_fhd", label: "FHD icon", size: art.iconFhd, level: "recommended" },
+    { key: "mm_icon_focus_hd", label: "HD icon", size: art.iconHd, level: "required" },
+    { key: "splash_screen_fhd", label: "FHD splash", size: art.splashFhd, level: "required" },
+    { key: "splash_screen_hd", label: "HD splash", size: art.splashHd, level: "required" },
+    { key: "splash_screen_sd", label: "SD splash", size: art.splashSd, level: "optional" },
   ];
   const m = ctx.project.manifest;
   const items: string[] = [];
@@ -191,12 +188,17 @@ function checkArtwork(ctx: CheckContext): CheckResult {
   for (const spec of specs) {
     const value = manifestGet(m, spec.key);
     if (!value) {
-      if (spec.required) {
-        items.push(`${spec.label} (${spec.key}, ${spec.size[0]}x${spec.size[1]}) is missing`);
+      const size = `${spec.size[0]}x${spec.size[1]}`;
+      if (spec.level === "required") {
+        items.push(`${spec.label} (${spec.key}, ${size}) is missing`);
         locations.push({ file: m.file, message: `Missing ${spec.key}` });
         statuses.push("fail");
+      } else if (spec.level === "recommended") {
+        items.push(`${spec.label} (${spec.key}, ${size}) is recommended`);
+        locations.push({ file: m.file, message: `${spec.key} is recommended` });
+        statuses.push("warn");
       } else {
-        items.push(`${spec.label} (${spec.key}, ${spec.size[0]}x${spec.size[1]}) is not set. The manifest doc still lists it as required`);
+        items.push(`${spec.label} (${spec.key}, ${size}) is not set. The manifest doc still lists it as required`);
         locations.push({ file: m.file, message: `Missing optional-but-documented ${spec.key}` });
         statuses.push("warn");
       }
@@ -231,7 +233,7 @@ function checkArtwork(ctx: CheckContext): CheckResult {
   }
   const status = worst(statuses.length ? statuses : ["pass"]);
   if (status === "pass") {
-    return result("artwork", "pass", "FHD and HD icons and splash screens match the official sizes and are not transparent");
+    return result("artwork", "pass", "Required icons and splash screens match the official sizes and are not transparent");
   }
   const detail = items[0] ?? "Artwork does not meet official sizes";
   return result("artwork", status, items.length === 1 ? detail : `${items.length} artwork problems`, items, null, { locations });
@@ -363,15 +365,23 @@ function checkLegacyScreens(ctx: CheckContext): CheckResult {
   if (!real.length) {
     return result("deprecated-legacy-screens", "pass", "No sunset legacy screen components were found");
   }
-  const names = [...new Set(real.map((h) => (h.excerpt.match(re) ?? [])[1] ?? "legacy component"))];
-  return result(
-    "deprecated-legacy-screens",
-    "fail",
-    `Found ${names.join(", ")}. These components were sunset and block certification`,
-    itemHits(real),
-    null,
-    { locations: locsFromHits(real, "Sunset legacy screen component") },
-  );
+  const { app, vendor } = partitionHits(real);
+  const nameOf = (h: SourceHit) => (h.excerpt.match(re) ?? [])[1] ?? "legacy component";
+  const items: string[] = [];
+  const locations: CheckLocation[] = [];
+  if (app.length) {
+    const names = [...new Set(app.map(nameOf))];
+    items.push(`Found ${names.join(", ")}. These components were sunset and block certification`);
+    locations.push(...locsFromHits(app, "Sunset legacy screen component"));
+  }
+  if (vendor.length) {
+    const names = [...new Set(vendor.map(nameOf))];
+    items.push(vendoredItem(names.join(", ")));
+    locations.push(...locsFromHits(vendor, "Sunset legacy screen component in vendored code"));
+  }
+  const status: CheckStatus = app.length ? "fail" : "warn";
+  const detail = items.length === 1 ? items[0]! : `${items.length} legacy screen problems`;
+  return result("deprecated-legacy-screens", status, detail, items, null, { locations });
 }
 
 // --- deprecated APIs ---
@@ -395,28 +405,33 @@ function checkDeprecatedApis(ctx: CheckContext): CheckResult {
   const certsAreError = isoCmp(today, certs.errorFrom) >= 0;
   const items: string[] = [];
   const locations: CheckLocation[] = [];
-  let certHits: SourceHit[] = [];
-  const errorHits: { name: string; hits: SourceHit[] }[] = [];
+  const statuses: CheckStatus[] = [];
+  let deadline: string | null = null;
 
   for (const dep of DEPRECATED) {
     const hits = searchSources(ctx.project.sources, dep.pattern);
     if (!hits.length) continue;
-    if (dep.kind === "certs") certHits = hits;
-    else errorHits.push({ name: dep.id, hits });
-  }
-
-  for (const { name, hits } of errorHits) {
-    items.push(`${name} at ${hits.map(at).join(", ")}`);
-    locations.push(...locsFromHits(hits, `${name} is deprecated and blocks publishing`));
-  }
-
-  if (certHits.length) {
-    const when = fmtDate(certs.errorFrom);
-    const msg = certsAreError
-      ? `InitClientCertificates() is a blocking Static Analysis error as of ${when}. Use ChannelStore getDeviceAttestationToken instead`
-      : `InitClientCertificates() is deprecated. Static Analysis warns today and will block publishing from ${when}. Use ChannelStore getDeviceAttestationToken instead`;
-    items.push(`${msg}  (${certHits.map(at).join(", ")})`);
-    locations.push(...locsFromHits(certHits, msg));
+    const { app, vendor } = partitionHits(hits);
+    if (vendor.length) {
+      items.push(vendoredItem(dep.id));
+      locations.push(...locsFromHits(vendor, `${dep.id} in vendored code`));
+      statuses.push("warn");
+    }
+    if (!app.length) continue;
+    if (dep.kind === "certs") {
+      const when = fmtDate(certs.errorFrom);
+      const msg = certsAreError
+        ? `InitClientCertificates() is a blocking Static Analysis error as of ${when}. Use ChannelStore getDeviceAttestationToken instead`
+        : `InitClientCertificates() is deprecated. Static Analysis warns today and will block publishing from ${when}. Use ChannelStore getDeviceAttestationToken instead`;
+      items.push(msg);
+      locations.push(...locsFromHits(app, msg));
+      statuses.push(certsAreError ? "fail" : "warn");
+      deadline = certs.errorFrom;
+    } else {
+      items.push(`${dep.id} is deprecated and blocks publishing`);
+      locations.push(...locsFromHits(app, `${dep.id} is deprecated and blocks publishing`));
+      statuses.push("fail");
+    }
   }
 
   if (!items.length) {
@@ -429,10 +444,9 @@ function checkDeprecatedApis(ctx: CheckContext): CheckResult {
     );
   }
 
-  const status: CheckStatus = errorHits.length || certsAreError ? "fail" : "warn";
-  const deadline = certHits.length ? certs.errorFrom : null;
-  const detail = items[0]!.split("  (")[0]!;
-  return result("deprecated-apis", status, items.length === 1 ? detail : `${items.length} deprecated APIs found`, items, deadline, { locations });
+  const status = worst(statuses);
+  const detail = items.length === 1 ? items[0]! : `${items.length} deprecated APIs found`;
+  return result("deprecated-apis", status, detail, items, deadline, { locations });
 }
 
 // --- launch beacon ---
@@ -497,7 +511,7 @@ function checkRaf(ctx: CheckContext): CheckResult {
   const m = ctx.project.manifest;
   const hinted = hasMatch(sources, AD_HINT_RE) || (manifestGet(m, "bs_libs_required") ?? "").toLowerCase().includes("roku_ads_lib");
   if (!hinted) {
-    return result("raf", "skip", "Roku Advertising Framework not used");
+    return result("raf", "skip", "not used");
   }
   const items: string[] = [];
   const locations: CheckLocation[] = [];
@@ -543,32 +557,41 @@ function checkRaf(ctx: CheckContext): CheckResult {
 
 // --- Roku Pay ---
 
-const PAY_HINT_RE = /\broChannelStore\b|\bChannelStore\b|\bdoOrder\s*\(|\bGetCatalog\s*\(|\bdoPurchase\s*\(|Roku\s*Pay|storeProduct|productType|\bsubscri(be|ption)\b/i;
-const CHANNELSTORE_RE = /\broChannelStore\b|CreateObject\s*\(\s*["']roChannelStore["']|\bChannelStore\b/i;
-const SUB_HINT_RE = /\bsubscri(be|ption)|renewal|alreadySubscribed|productType\s*=\s*["']MonthlySub/i;
+const PURCHASE_RE =
+  /\b(doOrder|GetCatalog|GetPurchases|RequestPartnerOrder|ConfirmPartnerOrder)\s*\(|\bcommand\s*=\s*["'](doOrder|getCatalog|getPurchases|purchase|upgradeOrder)["']/i;
 const DO_RECOVERY_RE = /\bdoRecovery\b/i;
 
 function checkRokuPay(ctx: CheckContext): CheckResult {
   const sources = ctx.project.sources;
-  if (!hasMatch(sources, PAY_HINT_RE)) {
-    return result("roku-pay", "skip", "Roku Pay not used");
+  const purchaseHits = searchSources(sources, PURCHASE_RE);
+  // ChannelStore used only for getUserData / account linking, or a bare "subscription"
+  // string in analytics or marketing copy, is not a purchase flow.
+  if (!purchaseHits.length) {
+    return result("roku-pay", "skip", "not used");
   }
-  const items: string[] = [];
-  const locations: CheckLocation[] = [];
-  const statuses: CheckStatus[] = [];
-  const storeHits = searchSources(sources, CHANNELSTORE_RE);
-  if (!storeHits.length) {
-    items.push("The project looks transactional, but no ChannelStore or roChannelStore usage was found");
-    statuses.push("fail");
+  const recoveryHits = searchSources(sources, DO_RECOVERY_RE);
+  const locations = [
+    ...locsFromHits(purchaseHits, "Purchase-related ChannelStore call"),
+    ...locsFromHits(recoveryHits, "doRecovery"),
+  ];
+  if (!recoveryHits.length) {
+    return result(
+      "roku-pay",
+      "warn",
+      "Purchase calls were found without doRecovery. Enhanced Subscription Recovery is required for subscriptions; this is a presence check only",
+      [],
+      null,
+      { locations },
+    );
   }
-  if (hasMatch(sources, SUB_HINT_RE) && !hasMatch(sources, DO_RECOVERY_RE)) {
-    items.push("Subscription-related code was found without doRecovery. Enhanced Subscription Recovery is required for subscriptions; this is a presence check only");
-    statuses.push("warn");
-  }
-  if (!statuses.length) {
-    return result("roku-pay", "pass", "ChannelStore / Roku Pay usage is present. This does not prove a purchase flow works");
-  }
-  return result("roku-pay", worst(statuses), items[0] ?? "Roku Pay setup looks incomplete", items, null, { locations });
+  return result(
+    "roku-pay",
+    "pass",
+    "ChannelStore purchase calls and doRecovery are present. This does not prove a purchase flow works",
+    [],
+    null,
+    { locations },
+  );
 }
 
 // --- screensaver manifest ---

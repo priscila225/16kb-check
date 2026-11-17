@@ -96,11 +96,47 @@ test("incomplete RAF setup fails, and enableAdMeasurements is a warning when mis
   assert.ok(check.items.some((i) => /Roku_Ads\.brs|roku_ads_lib|StitchedAdHandledEvent/.test(i)));
 });
 
-test("subscription hints without ChannelStore fail Roku Pay; doRecovery is enough to pass", async () => {
-  const incomplete = await one("pay-incomplete", "roku-pay");
-  assert.equal(incomplete.status, "fail");
+test("subscription wording and account-linking ChannelStore do not trigger Roku Pay", async () => {
+  const wording = await one("pay-incomplete", "roku-pay");
+  assert.equal(wording.status, "skip", wording.detail);
+  const linking = await one("pay-account-link", "roku-pay");
+  assert.equal(linking.status, "skip", linking.detail);
+});
+
+test("purchase calls without doRecovery warn, and list file:line locations", async () => {
+  const check = await one("pay-purchase-no-recovery", "roku-pay");
+  assert.equal(check.status, "warn");
+  assert.match(check.detail, /doRecovery/);
+  assert.ok(check.locations && check.locations.length >= 1, "expected locations");
+  assert.ok(check.locations.some((l) => l.file.endsWith("main.brs") && l.line));
   const ready = await one("pay-ready", "roku-pay");
   assert.equal(ready.status, "pass", ready.detail);
+  assert.ok(ready.locations && ready.locations.length >= 1);
+});
+
+test("a missing FHD icon is a recommended warning owned only by artwork", async () => {
+  const { json, exitCode } = await runJson([fixture("hd-icons-vendored"), "--offline"]);
+  assert.equal(exitCode, 0);
+  const checks = byId(json);
+  assert.equal(checks["manifest-required"]!.status, "pass", checks["manifest-required"]!.detail);
+  assert.doesNotMatch(checks["manifest-required"]!.detail, /mm_icon_focus_fhd|FHD icon/);
+  assert.equal(checks.artwork!.status, "warn");
+  assert.match(checks.artwork!.detail, /recommended/);
+  assert.equal(checks.artwork!.items.filter((i) => /mm_icon_focus_fhd|FHD icon/.test(i)).length, 1);
+});
+
+test("InitClientCertificates in vendored code stays a warning, even after Apr 1, 2027", async () => {
+  const before = await one("hd-icons-vendored", "deprecated-apis");
+  assert.equal(before.status, "warn");
+  assert.match(before.detail, /vendored code/i);
+  assert.match(before.detail, /updating the vendor SDK/i);
+  assert.ok(before.locations?.some((l) => /vendor\/example-sdk\/http\.brs/.test(l.file) && l.line));
+  const { json } = await runJson([fixture("hd-icons-vendored"), "--offline", "--only", "deprecated-apis"], {
+    now: new Date("2027-04-01T00:00:00Z"),
+  });
+  const after = byId(json)["deprecated-apis"]!;
+  assert.equal(after.status, "warn");
+  assert.match(after.detail, /vendored code/i);
 });
 
 function collect(dir: string, prefix = ""): { name: string; data: Buffer }[] {

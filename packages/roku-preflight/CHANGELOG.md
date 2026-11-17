@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- A missing FHD focus icon (`mm_icon_focus_fhd`) is a recommended warning on the artwork check only. Manifest-required no longer reports icon or splash fields, so the same gap is not listed twice. HD icons and FHD/HD splash screens are still required.
+- Roku Pay only warns when it finds purchase calls (`doOrder`, `getCatalog`, `getPurchases`, or similar ChannelStore commands) without `doRecovery`, and it always prints `file:line` locations. ChannelStore used only for `getUserData` or account linking, and bare "subscription" wording, no longer trigger the check.
+- Deprecated APIs and sunset screens found only in vendored or third-party code (folders such as `vendor/`, `libs/`, `lib/`, `third_party/`, `sdk/`, or `components/*sdk*`) are warnings, with a hint to update the vendor SDK.
+- Text output prints each SKIP on its own line, like PASS. A finding with a single detail line no longer repeats that line as a bullet. Locations are printed one per line, indented.
+
 ## 1.0.0
 
 First release of roku-preflight.

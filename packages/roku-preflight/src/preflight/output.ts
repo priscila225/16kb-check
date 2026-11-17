@@ -51,27 +51,33 @@ function titleWidth(results: CheckResult[]): number {
   return Math.max(...results.map((r) => r.title.length), 10) + 2;
 }
 
+export function formatLocation(loc: { file: string; line?: number }): string {
+  return loc.line !== undefined ? `${loc.file}:${loc.line}` : loc.file;
+}
+
+function sameFinding(detail: string, item: string): boolean {
+  const a = detail.trim();
+  const b = item.trim();
+  return a === b || a.startsWith(b) || b.startsWith(a);
+}
+
+function displayItems(r: CheckResult, verbose: boolean): string[] {
+  const items = r.items ?? [];
+  const extra = verbose ? (r.verboseItems ?? []) : [];
+  if (items.length === 1 && !extra.length && sameFinding(r.detail, items[0]!)) return [];
+  return extra.length ? [...items, ...extra] : items;
+}
+
 function writeCheck(lines: string[], r: CheckResult, titleW: number, color: boolean, verbose: boolean, showLinks: boolean): void {
   lines.push(`${paint(color, COLOR[r.status], LABEL[r.status])}  ${r.title.padEnd(titleW)}${r.detail}`);
-  for (const item of r.items ?? []) lines.push(`      - ${item}`);
-  if (verbose) for (const item of r.verboseItems ?? []) lines.push(`      - ${item}`);
+  for (const item of displayItems(r, verbose)) lines.push(`      - ${item}`);
+  if (r.locations?.length) {
+    for (const loc of r.locations) lines.push(`      ${formatLocation(loc)}`);
+  }
   if (showLinks) {
     lines.push(paint(color, "90", `      Rule: ${r.source}`));
     lines.push(paint(color, "90", `      → ${r.link}`));
   }
-}
-
-function skipLabel(r: CheckResult): string {
-  const detail = r.detail.trim();
-  const shortened = detail.replace(new RegExp(`^${r.title}\\s+`, "i"), "").trim() || detail;
-  if (shortened === detail && detail.toLowerCase().startsWith(r.title.toLowerCase())) {
-    return `${r.title} (${detail.slice(r.title.length).trim()})`;
-  }
-  if (/ not used$/i.test(detail)) {
-    const rest = detail.replace(new RegExp(`^${r.title}\\s+`, "i"), "").trim();
-    return `${r.title} (${rest || "not used"})`;
-  }
-  return `${r.title} (${detail})`;
 }
 
 export function formatCheckText(input: {
@@ -114,8 +120,8 @@ export function formatCheckText(input: {
     for (const r of pass) {
       lines.push(`${paint(color, COLOR.pass, "PASS")}  ${r.title.padEnd(titleW)}${r.detail}`);
     }
-    if (skip.length) {
-      lines.push(`${paint(color, COLOR.skip, "SKIP")}  ${skip.map(skipLabel).join(", ")}`);
+    for (const r of skip) {
+      lines.push(`${paint(color, COLOR.skip, "SKIP")}  ${r.title.padEnd(titleW)}${r.detail}`);
     }
   }
 

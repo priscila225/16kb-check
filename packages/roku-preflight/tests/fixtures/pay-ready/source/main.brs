@@ -18,6 +18,8 @@ sub Main(args as Object)
     end if
 
     store = CreateObject("roChannelStore")
+    store.GetCatalog()
+    store.DoOrder()
     store.doRecovery()
     while true
         msg = wait(0, m.port)

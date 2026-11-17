@@ -14,7 +14,7 @@ function linkCount(out: string): { rules: number; site: number } {
   };
 }
 
-test("ready-channel default output: compact PASS, collapsed SKIP, no pass links, summary repeated", async () => {
+test("ready-channel default output: compact PASS, one SKIP line each, no pass links, summary repeated", async () => {
   const { out, exitCode } = await runText([fixture("ready-channel"), "--offline", "--no-color"]);
   assert.equal(exitCode, 0);
   const lines = out.split("\n");
@@ -26,10 +26,16 @@ test("ready-channel default output: compact PASS, collapsed SKIP, no pass links,
   assert.equal(linkCount(out).site, 0);
 
   const skips = statusLines(out).filter((l) => l.startsWith("SKIP  "));
-  assert.equal(skips.length, 1, out);
-  assert.match(skips[0]!, /Roku Advertising Framework \(not used\)/);
-  assert.match(skips[0]!, /Roku Pay \(not used\)/);
-  assert.match(skips[0]!, /Screensaver manifest/);
+  assert.equal(skips.length, 3, out);
+  assert.ok(skips.every((l) => /SKIP  \S.*  \S/.test(l)), skips.join("\n"));
+  assert.ok(skips.some((l) => /Roku Advertising Framework\s+not used/.test(l)), out);
+  assert.ok(skips.some((l) => /Roku Pay\s+not used/.test(l)), out);
+  assert.ok(skips.some((l) => /Screensaver manifest\s+Not a standalone screensaver/.test(l)), out);
+  for (const s of skips) {
+    const idx = lines.indexOf(s);
+    const next = lines[idx + 1] ?? "";
+    assert.ok(!next.startsWith("      -"), `SKIP should have no sub-bullets by default: ${s}\n${next}`);
+  }
 
   const passes = statusLines(out).filter((l) => l.startsWith("PASS  "));
   assert.ok(passes.length >= 8);
@@ -96,3 +102,36 @@ test("json includes locations, notes, and exitCode", async () => {
   assert.ok(legacy.locations && legacy.locations.length >= 1);
   assert.ok(legacy.locations[0]!.file.endsWith("main.brs"));
 });
+
+test("a single finding does not repeat the headline as a bullet, and locations are one per line", async () => {
+  const { out, exitCode } = await runText([fixture("problem-channel"), "--offline", "--no-color", "--only", "deprecated-apis"]);
+  assert.equal(exitCode, 0);
+  const lines = out.split("\n");
+  const warn = statusLines(out).find((l) => l.startsWith("WARN  "));
+  assert.ok(warn, out);
+  assert.match(warn!, /InitClientCertificates/);
+  const idx = lines.indexOf(warn!);
+  const following = lines.slice(idx + 1);
+  assert.ok(!following[0]!.startsWith("      -"), `did not expect a repeated bullet: ${following[0]}`);
+  const loc = following.find((l) => /^      \S/.test(l) && !l.startsWith("      Rule:") && !l.startsWith("      →"));
+  assert.ok(loc, out);
+  assert.match(loc!, /source\/main\.brs:\d+$/);
+  assert.doesNotMatch(warn!, /source\/main\.brs/);
+});
+
+test("hd-icons-vendored reports the missing FHD icon and vendored API once each, with indented locations", async () => {
+  const { out, exitCode } = await runText([fixture("hd-icons-vendored"), "--offline", "--no-color"]);
+  assert.equal(exitCode, 0);
+  const warns = statusLines(out).filter((l) => l.startsWith("WARN  "));
+  assert.equal(warns.length, 2, out);
+  assert.ok(warns.some((l) => /Icons and splash screens/.test(l) && /recommended/.test(l)), out);
+  assert.ok(warns.some((l) => /Deprecated APIs/.test(l) && /vendored code/.test(l)), out);
+  assert.equal(statusLines(out).filter((l) => /FHD icon|mm_icon_focus_fhd/.test(l)).length, 1, out);
+  const lines = out.split("\n");
+  const vendored = warns.find((l) => /vendored code/.test(l))!;
+  const idx = lines.indexOf(vendored);
+  const loc = lines.slice(idx + 1).find((l) => /vendor\/example-sdk\/http\.brs:\d+/.test(l));
+  assert.ok(loc, out);
+  assert.match(loc!, /^      vendor\/example-sdk\/http\.brs:\d+$/);
+});
+

@@ -6,7 +6,7 @@ Check a Roku app against current certification rules before you submit. One comm
 npx roku-preflight check
 ```
 
-It reads your `manifest`, source (`.brs`, `.bs`, `.xml`) and artwork, or a `.zip` package, and prints a scannable report: **FAIL**, **WARN** and **INFO** first, with details and links, then a compact **PASS** list and any **SKIP**s on one line. Links to Roku's official page and a plain-English explainer on [devbooth.dev](https://devbooth.dev) appear on findings; `--verbose` shows them on every check. Any FAIL exits with code 1, so it drops straight into CI.
+It reads your `manifest`, source (`.brs`, `.bs`, `.xml`) and artwork, or a `.zip` package, and prints a scannable report: **FAIL**, **WARN** and **INFO** first, with details and links, then a compact **PASS** list and each **SKIP** on its own line. Links to Roku's official page and a plain-English explainer on [devbooth.dev](https://devbooth.dev) appear on findings; `--verbose` shows them on every check. Any FAIL exits with code 1, so it drops straight into CI.
 
 This is a static check. It does not replace [Roku's official Static Analysis](https://developer.roku.com/dev/docs/static-analysis-tool), App Behavior Analysis, or human cert review, which are still required when you submit. It also does not measure launch time, playback, memory use, or the Dashboard minimum firmware setting.
 
@@ -14,18 +14,18 @@ This is a static check. It does not replace [Roku's official Static Analysis](ht
 
 | Id | Check | Fails when | Warns when |
 |---|---|---|---|
-| `manifest-required` | Manifest fields | required fields are missing, a `pkg:/` artwork path is missing from the package, or the manifest has no trailing newline | a listed path is not a `pkg:/` URI |
+| `manifest-required` | Manifest fields | required fields (`title`, version numbers) are missing, or the manifest has no trailing newline. Icon and splash fields are checked only by `artwork`, so they are not reported twice | |
 | `version` | Version number | `major_version` / `minor_version` / `build_version` are missing or all zeros (criterion 6.1). It cannot tell whether you incremented the version since the last store build | |
 | `rsg-version` | RSG version | `rsg_version` is missing or not `1.3` (required since Oct 1, 2026) | |
-| `artwork` | Icons and splash screens | FHD icon is not 540x405, HD icon is not 290x218, FHD splash is not 1920x1080, HD splash is not 1280x720, a file is missing, or artwork is transparent (criterion 6.4) | SD splash (`720x480`) is missing, or an image's size could not be read |
+| `artwork` | Icons and splash screens | HD icon is not 290x218, FHD splash is not 1920x1080, HD splash is not 1280x720, a listed file is missing or the wrong size, or artwork is transparent (criterion 6.4) | FHD icon (`mm_icon_focus_fhd`, 540x405) is missing (recommended; store apps can pass cert with the HD icon), SD splash (`720x480`) is missing, or an image's size could not be read |
 | `package-size` | Package size | the zip (or a zip built from the project folder) is over 4 MB (criterion 3.7) | |
 | `deep-linking` | Deep linking | `supports_input_launch=1`, `roInput` / `roInputEvent` handling, or a `Main` / `RunUserInterface` entry that reads `contentId` and `mediaType` is missing. This is presence only, not "the deep link actually plays" | |
-| `deprecated-legacy-screens` | Legacy screens | sunset components such as `roVideoScreen`, `roPosterScreen`, `roGridScreen` or `roSpringboardScreen` are found | |
-| `deprecated-apis` | Deprecated APIs | documented deprecated APIs such as `ShowChannelStoreSpringboard`, `LaunchApp`, `Eval()`, `file://` URLs or in-app ECP are found, or `InitClientCertificates()` is used on or after Apr 1, 2027 | `InitClientCertificates()` is used before Apr 1, 2027 (Static Analysis warns today and will block publishing on that date) |
+| `deprecated-legacy-screens` | Legacy screens | sunset components such as `roVideoScreen`, `roPosterScreen`, `roGridScreen` or `roSpringboardScreen` are found in your own source | the same APIs are found only in vendored or third-party code |
+| `deprecated-apis` | Deprecated APIs | documented deprecated APIs such as `ShowChannelStoreSpringboard`, `LaunchApp`, `Eval()`, `file://` URLs or in-app ECP are found in your own source, or `InitClientCertificates()` is used there on or after Apr 1, 2027 | `InitClientCertificates()` is used in your own source before Apr 1, 2027, or a deprecated API is found only in vendored or third-party code (the usual fix is updating that SDK) |
 | `launch-beacon` | Launch beacon | `AppLaunchComplete` is not signaled in source. This does not measure the 15-second launch limit | |
 | `memory-monitor` | Memory Monitor | `roAppMemoryMonitor` is not used (required since Oct 1, 2026) | |
 | `raf` | Roku Advertising Framework | the project looks like it serves ads but is missing the RAF import, `Roku_Ads()` constructor, `bs_libs_required=roku_ads_lib`, or a `StitchedAdsInit` / `StitchedAdHandledEvent` pair | `enableAdMeasurements` is missing (region and kids status cannot be known from the project). A no-ads app is skipped |
-| `roku-pay` | Roku Pay | the project looks transactional but ChannelStore / `roChannelStore` is not used | subscription-related code is present without `doRecovery`. A non-transactional app is skipped |
+| `roku-pay` | Roku Pay | | purchase calls such as `doOrder`, `getCatalog` or `getPurchases` are present without `doRecovery`. ChannelStore used only for `getUserData` or account linking, and bare "subscription" wording in analytics or marketing copy, are skipped |
 | `screensaver-manifest` | Screensaver manifest | `screensaver_title` is set and `title` is also present, or version fields are missing. Regular apps skip this check | |
 
 ## Sample output
@@ -35,17 +35,19 @@ roku-preflight check  ·  Example Channel  ·  project  ·  version 1.2.3  rsg 1
 10 pass · 0 warn · 0 fail · 3 skip
 This is a static preflight check. Roku's official Static Analysis is still required when you submit.
 
-PASS  Manifest fields             Required fields, pkg:/ paths and trailing newline are in place
+PASS  Manifest fields             Required fields and trailing newline are in place
 PASS  Version number              1.2.3 (this check cannot tell whether you incremented it since the last store build)
 PASS  RSG version                 rsg_version=1.3, required since Oct 1, 2026
-PASS  Icons and splash screens    FHD and HD icons and splash screens match the official sizes and are not transparent
+PASS  Icons and splash screens    Required icons and splash screens match the official sizes and are not transparent
 PASS  Package size                2.6 KB (packaged zip built from this folder). Limit is 4 MB
 PASS  Deep linking                supports_input_launch=1, roInput handling, and Main launch args for contentId and mediaType are present. This does not prove a deep link actually plays
 PASS  Legacy screens              No sunset legacy screen components were found
 PASS  Deprecated APIs             No documented deprecated APIs were found. InitClientCertificates() becomes a blocking error on Apr 1, 2027
 PASS  Launch beacon               AppLaunchComplete is signaled in source. This does not measure launch time (official criterion is 15 seconds to a fully rendered home screen)
 PASS  Memory Monitor              roAppMemoryMonitor is used (required since Oct 1, 2026)
-SKIP  Roku Advertising Framework (not used), Roku Pay (not used), Screensaver manifest (Not a standalone screensaver)
+SKIP  Roku Advertising Framework  not used
+SKIP  Roku Pay                    not used
+SKIP  Screensaver manifest        Not a standalone screensaver
 
 Checked fully offline. Nothing left this machine.
 ```

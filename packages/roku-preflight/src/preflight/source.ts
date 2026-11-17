@@ -11,6 +11,45 @@ export type SourceHit = {
 
 const SOURCE_EXT = new Set([".brs", ".bs", ".xml"]);
 
+const VENDOR_DIRS = new Set([
+  "vendor",
+  "vendors",
+  "libs",
+  "lib",
+  "third_party",
+  "third-party",
+  "thirdparty",
+  "sdk",
+  "sdks",
+  "external",
+  "externals",
+  "3rdparty",
+  "3rd-party",
+  "3rd_party",
+]);
+
+/** A path segment that looks like a vendor SDK folder or component (e.g. ExampleAnalyticsSdk, foo-sdk). */
+function looksLikeSdkName(segment: string): boolean {
+  const base = segment.replace(/\.(brs|bs|xml)$/i, "");
+  return /(^|[._-])sdk([._-]|$)/i.test(base) || /sdk$/i.test(base);
+}
+
+/** True when a hit is in third-party or vendor code, not the app's own source. */
+export function isVendoredPath(path: string): boolean {
+  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+  if (!parts.length) return false;
+  const dirs = parts.slice(0, -1);
+  for (const dir of dirs) {
+    if (VENDOR_DIRS.has(dir.toLowerCase())) return true;
+    if (looksLikeSdkName(dir)) return true;
+  }
+  const componentsAt = parts.findIndex((p) => p.toLowerCase() === "components");
+  if (componentsAt >= 0) {
+    return parts.slice(componentsAt + 1).some(looksLikeSdkName);
+  }
+  return false;
+}
+
 export function isSourcePath(path: string): boolean {
   const lower = path.toLowerCase();
   const dot = lower.lastIndexOf(".");
