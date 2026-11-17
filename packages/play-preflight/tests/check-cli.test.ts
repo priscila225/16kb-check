@@ -76,15 +76,18 @@ test("legacy app: fails exit 1, and every check line carries a Google source and
   }
 });
 
-test("text output: one status line per check, source and link under each, summary and privacy line", async () => {
+test("text output: header, summary at both ends, links only on fail/warn/info, one source caveat", async () => {
   const { out, exitCode } = await runText([fixture("legacy-app"), "--no-color"], { catalog: CATALOG, enqueue: false });
   assert.equal(exitCode, 1);
   const statusLines = out.split("\n").filter((l) => /^(PASS|WARN|FAIL|SKIP|INFO)  /.test(l));
   assert.equal(statusLines.length, CHECK_IDS.length);
   assert.equal(out.split("\n").filter((l) => l.startsWith("      Rule: https://")).length, CHECK_IDS.length);
   assert.equal(out.split("\n").filter((l) => l.startsWith("      → https://devbooth.dev/")).length, CHECK_IDS.length);
-  assert.match(out, /^play-preflight check {2}· {2}app \(targetSdk 35, from app\/build\.gradle/m);
-  assert.match(out, /0 pass · 7 warn · 3 fail · 0 skip · 1 info/);
+  assert.match(out, /^play-preflight check {2}· {2}app {2}· {2}source only {2}· {2}targetSdk 35  minSdk 23  compileSdk 35$/m);
+  assert.equal(out.split("\n").filter((l) => l === "0 pass · 7 warn · 3 fail · 0 skip · 1 info").length, 2);
+  assert.equal(out.split("Read from source manifests.").length - 1, 1);
+  assert.doesNotMatch(out, /^Note: Read from source manifests/m);
+  assert.doesNotMatch(out, /Next: API 37/);
   assert.doesNotMatch(out, /\u001b\[/);
 });
 
@@ -112,7 +115,13 @@ test("--offline makes no network calls at all", async () => {
   assert.ok(byId(json)["16kb"].items.includes("SDK lookup skipped (--offline)."));
 });
 
-test("parseCheckArgv: --no-submit, --no-auto-check, and PLAY_PREFLIGHT_NO_SUBMIT", () => {
+test("parseCheckArgv: --verbose, --format, --no-submit, --no-auto-check, and PLAY_PREFLIGHT_NO_SUBMIT", () => {
+  assert.equal(parseCheckArgv([], {}).verbose, false);
+  assert.equal(parseCheckArgv(["--verbose"], {}).verbose, true);
+  assert.equal(parseCheckArgv(["-v"], {}).verbose, true);
+  assert.equal(parseCheckArgv([], {}).format, "text");
+  assert.equal(parseCheckArgv(["--format", "github"], {}).format, "github");
+  assert.throws(() => parseCheckArgv(["--format", "xml"], {}), /Unknown --format: xml/);
   assert.equal(parseCheckArgv([], {}).noSubmit, false);
   assert.equal(parseCheckArgv(["--no-submit"], {}).noSubmit, true);
   assert.equal(parseCheckArgv(["--no-auto-check"], {}).noSubmit, true);
@@ -298,6 +307,11 @@ test("dispatcher: default command is check, --version, help, unknown command", a
   assert.match(ch.out, /--no-submit/);
   assert.match(ch.out, /--no-auto-check/);
   assert.match(ch.out, /PLAY_PREFLIGHT_NO_SUBMIT/);
+  assert.match(ch.out, /--verbose/);
+  assert.match(ch.out, /--format/);
+  assert.match(ch.out, /Exit codes:/);
+  assert.match(ch.out, /1  at least one FAIL/);
+  assert.match(ch.out, /2  bad usage/);
 });
 
 const READY_CATALOG: CatalogEntry[] = [

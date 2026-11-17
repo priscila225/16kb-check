@@ -21,6 +21,13 @@ export type SdkCounts = {
   buildToolingIgnored: number;
 };
 
+/** A file location for text output, JSON, and GitHub workflow annotations. */
+export type CheckLocation = {
+  file: string;
+  line?: number;
+  message: string;
+};
+
 export type CheckResult = {
   id: CheckId;
   status: CheckStatus;
@@ -31,6 +38,10 @@ export type CheckResult = {
   source: string;
   link: string;
   items: string[];
+  /** Extra lines shown only with --verbose (side notes, ready SDK rows). */
+  verboseItems?: string[];
+  /** File/line locations when known. Included in JSON and GitHub annotations. */
+  locations?: CheckLocation[];
   /** Set on the 16kb check after a catalog lookup. */
   sdk?: SdkCounts;
 };
@@ -65,9 +76,28 @@ export type CheckContext = {
   agp?: AgpCheck;
 };
 
-function result(id: CheckId, status: CheckStatus, detail: string, items: string[] = [], deadline: string | null = null): CheckResult {
+type ResultExtra = Pick<CheckResult, "verboseItems" | "locations">;
+
+function result(
+  id: CheckId,
+  status: CheckStatus,
+  detail: string,
+  items: string[] = [],
+  deadline: string | null = null,
+  extra: ResultExtra = {},
+): CheckResult {
   const r = RULES[id];
-  return { id, status, title: r.title, detail, deadline, source: r.source, link: r.link, items };
+  return { id, status, title: r.title, detail, deadline, source: r.source, link: r.link, items, ...extra };
+}
+
+function shortClass(name: string): string {
+  const trimmed = name.replace(/^\./, "");
+  const i = trimmed.lastIndexOf(".");
+  return i >= 0 ? trimmed.slice(i + 1) : trimmed || name;
+}
+
+function at(file: string, line?: number): string {
+  return line !== undefined ? `${file}:${line}` : file;
 }
 
 const RANK: Record<CheckStatus, number> = { skip: 0, info: 1, pass: 2, warn: 3, fail: 4 };
@@ -108,7 +138,14 @@ export function checkTargetApi(ctx: CheckContext): CheckResult {
   }
   const next = value < 37 ? ["Next: API 37. Google hasn't announced that date yet."] : [];
   if (value >= required) {
-    return result("target-api", "pass", `targets ${value}. Play needs ${required}${kind} for new apps and updates since ${fmtDate(DATES.targetApi36)}`, next, DATES.targetApi36);
+    return result(
+      "target-api",
+      "pass",
+      `targets ${value}. Play needs ${required}${kind} for new apps and updates since ${fmtDate(DATES.targetApi36)}`,
+      [],
+      DATES.targetApi36,
+      next.length ? { verboseItems: next } : {},
+    );
   }
   const items: string[] = [];
   if (formFactor === "phone" && value < 35) items.push("Below API 35, existing apps stop showing to new users on newer Android versions.");
@@ -182,19 +219,24 @@ export function check16kb(ctx: CheckContext): CheckResult {
   }
 
   const sdk = ctx.sdk;
+  let readyItems: string[] = [];
   if (sdk.status === "ok") {
     const rows = sdk.report.rows.filter((r) => r.configuration !== "plugin");
     const blocking = rows.filter((r) => BLOCKING.has(r.verdict));
     const unknown = rows.filter((r) => r.verdict === "unknown" || r.verdict === "checking").length;
+    const attention = rows.filter((r) => BLOCKING.has(r.verdict) || r.verdict === "unknown" || r.verdict === "checking");
+    const rowLine = (r: (typeof rows)[number]): string => {
+      const min = r.entry?.minVersion && BLOCKING.has(r.verdict) ? `, 16 KB from ${r.entry.minVersion}` : "";
+      return `${r.coordinate} ${r.declaredVersion || "(version not resolved)"}${min}`;
+    };
+    readyItems = rows.filter((r) => !attention.includes(r)).map(rowLine);
     if (blocking.length) {
       parts.push({ status: "warn", text: `${say(blocking.length, "SDK", "SDKs")} not ready` });
-      for (const r of blocking) {
-        const min = r.entry?.minVersion ? `, 16 KB from ${r.entry.minVersion}` : "";
-        items.push(`${r.coordinate} ${r.declaredVersion || "(version not resolved)"}${min}`);
-      }
+      for (const r of attention) items.push(rowLine(r));
       items.push("Run `npx play-preflight 16kb` for the full SDK table.");
     } else if (rows.length) {
       parts.push({ status: "pass", text: `${rows.length} public SDKs checked, none blocking${unknown ? ` (${unknown} unknown)` : ""}` });
+      for (const r of attention) items.push(rowLine(r));
     }
   } else if (sdk.status === "offline") {
     items.push("SDK lookup skipped (--offline).");
@@ -214,13 +256,16 @@ export function check16kb(ctx: CheckContext): CheckResult {
         : sdk.status === "error"
           ? "couldn't reach the SDK catalog and no APK/AAB given"
           : "no dependencies or native libraries found";
-    return withSdk(result("16kb", "skip", why, items, DATES.sixteenKbBlock), ctx);
+    return withSdk(result("16kb", "skip", why, items, DATES.sixteenKbBlock, readyItems.length ? { verboseItems: readyItems } : {}), ctx);
   }
   const status = worst(parts.map((p) => p.status));
   const lead = parts.filter((p) => p.status === status).map((p) => p.text);
   const rest = parts.filter((p) => p.status !== status).map((p) => p.text);
   const detail = lead.join("; ") + (status === "fail" || status === "warn" ? `. ${when}` : "");
-  return withSdk(result("16kb", status, detail, [...rest, ...items], DATES.sixteenKbBlock), ctx);
+  return withSdk(
+    result("16kb", status, detail, [...rest, ...items], DATES.sixteenKbBlock, readyItems.length ? { verboseItems: readyItems } : {}),
+    ctx,
+  );
 }
 
 // J. Play Billing Library
@@ -387,9 +432,9 @@ export function checkEdgeToEdge(ctx: CheckContext): CheckResult {
   const optOuts = ctx.edgeToEdgeOptOuts.filter((o) => isTrue(o.value));
   const t = ctx.target.effective;
   if (!optOuts.length) {
-    return result("edge-to-edge", "pass", "no windowOptOutEdgeToEdgeEnforcement opt-out found", [
-      "Apps targeting 35+ draw edge to edge on Android 15+. Check your insets on a real device.",
-    ]);
+    return result("edge-to-edge", "pass", "no windowOptOutEdgeToEdgeEnforcement opt-out found", [], null, {
+      verboseItems: ["Apps targeting 35+ draw edge to edge on Android 15+. Check your insets on a real device."],
+    });
   }
   const files = optOuts.map((o) => o.file);
   if (t >= 36) {
@@ -422,17 +467,29 @@ export function checkLargeScreens(ctx: CheckContext): CheckResult {
   const m = ctx.manifest;
   if (!m) return result("large-screens", "skip", NO_MANIFEST);
   if ((m.application["android:appCategory"] ?? "").trim() === "game") return result("large-screens", "skip", "games are exempt (appCategory=game)");
+  const LARGE_SCREEN_HINT =
+    "Fix: drop screenOrientation, resizeableActivity and aspect-ratio locks, or provide large-screen layouts.";
   const items: string[] = [];
+  const locations: CheckLocation[] = [];
   const appNotResizable = isFalse(m.application["android:resizeableActivity"]);
-  if (appNotResizable) items.push('<application android:resizeableActivity="false">');
+  if (appNotResizable) {
+    const file = m.applicationFile ?? m.files[0] ?? "AndroidManifest.xml";
+    const line = m.applicationLine;
+    items.push(`application  ${at(file, line)}  resizeableActivity=false`);
+    locations.push({ file, line, message: "application sets resizeableActivity=false" });
+  }
   for (const a of m.activities) {
     const bits: string[] = [];
     const o = (a.attrs["android:screenOrientation"] ?? "").trim();
-    if (LOCKED_ORIENTATIONS.has(o)) bits.push(`screenOrientation=${o}`);
+    if (LOCKED_ORIENTATIONS.has(o)) bits.push(o);
     if (isFalse(a.attrs["android:resizeableActivity"])) bits.push("resizeableActivity=false");
     if (a.attrs["android:minAspectRatio"]) bits.push(`minAspectRatio=${a.attrs["android:minAspectRatio"]}`);
     if (a.attrs["android:maxAspectRatio"]) bits.push(`maxAspectRatio=${a.attrs["android:maxAspectRatio"]}`);
-    if (bits.length) items.push(`${a.name}: ${bits.join(", ")}`);
+    if (!bits.length) continue;
+    const cls = shortClass(a.name);
+    const attr = bits.join(", ");
+    items.push(`${cls}  ${at(a.file, a.line)}  ${attr}`);
+    locations.push({ file: a.file, line: a.line, message: `${cls} locks ${attr}` });
   }
   const optOut =
     isTrue(m.appProperties[RESIZABILITY_OPT_OUT]) || m.activities.some((a) => isTrue(a.properties[RESIZABILITY_OPT_OUT]));
@@ -440,14 +497,17 @@ export function checkLargeScreens(ctx: CheckContext): CheckResult {
   if (!items.length && !optOut) return result("large-screens", "pass", "no orientation, resizability or aspect ratio locks");
   const n = items.length - (appNotResizable ? 1 : 0);
   const lockText = n > 0 ? `${n} ${n === 1 ? "activity locks" : "activities lock"} orientation or size` : "the app locks resizing";
-  const out = cap(items);
+  const out = [...items];
   if (optOut) out.push(`${RESIZABILITY_OPT_OUT} is set. It's temporary and stops working at API 37.`);
-  if (!items.length) return result("large-screens", "warn", "uses the temporary resizability opt-out, which is gone at API 37", out);
+  out.push(LARGE_SCREEN_HINT);
+  if (!items.length) {
+    return result("large-screens", "warn", "uses the temporary resizability opt-out, which is gone at API 37", out, null, { locations });
+  }
   const detail =
     t >= 36
       ? `${lockText}. Android 16 ignores this on screens 600dp and wider when you target 36${assumedNote(ctx)}`
       : `${lockText}. It will be ignored on screens 600dp and wider once you target 36`;
-  return result("large-screens", "warn", detail, out);
+  return result("large-screens", "warn", detail, out, null, { locations });
 }
 
 // E. Predictive back
@@ -536,10 +596,6 @@ export function checkPredictiveBack(ctx: CheckContext): CheckResult {
   return result("predictive-back", "warn", `${hits.length} ${hits.length === 1 ? "file uses" : "files use"} the old back APIs, which stop being called once you target 36`, [...cap(hits), ...notes]);
 }
 
-function sourceManifestNote(ctx: CheckContext): string[] {
-  return ctx.manifestKind === "source" ? ["Read from source manifests. Libraries can add permissions at build time, so build once or pass --apk."] : [];
-}
-
 // H. Photo and video permissions
 export function checkPhotoVideo(ctx: CheckContext): CheckResult {
   const m = ctx.manifest;
@@ -554,12 +610,12 @@ export function checkPhotoVideo(ctx: CheckContext): CheckResult {
     found.push("READ_EXTERNAL_STORAGE");
     items.push('READ_EXTERNAL_STORAGE has no android:maxSdkVersion="32". On Android 13+ use READ_MEDIA_* or the photo picker.');
   }
-  if (!found.length) return result("photo-video", "pass", "no broad photo, video or storage permissions", sourceManifestNote(ctx));
+  if (!found.length) return result("photo-video", "pass", "no broad photo, video or storage permissions");
   if (found.includes("READ_MEDIA_IMAGES") || found.includes("READ_MEDIA_VIDEO")) {
     items.unshift("Use the photo picker (androidx.activity 1.7.0+) unless the app's core use needs broad access.");
   }
   if (found.includes("MANAGE_EXTERNAL_STORAGE")) items.push("MANAGE_EXTERNAL_STORAGE (All files access) needs a Play Console declaration and a qualifying use.");
-  return result("photo-video", "warn", `${found.join(", ")} declared. Needs a Play Console declaration or the photo picker`, [...items, ...sourceManifestNote(ctx)]);
+  return result("photo-video", "warn", `${found.join(", ")} declared. Needs a Play Console declaration or the photo picker`, items);
 }
 
 // G. Exact alarms
@@ -568,7 +624,7 @@ export function checkExactAlarms(ctx: CheckContext): CheckResult {
   if (!m) return result("exact-alarms", "skip", NO_MANIFEST);
   const use = hasPermission(m, "USE_EXACT_ALARM");
   const schedule = hasPermission(m, "SCHEDULE_EXACT_ALARM");
-  if (!use && !schedule) return result("exact-alarms", "pass", "no exact alarm permissions", sourceManifestNote(ctx));
+  if (!use && !schedule) return result("exact-alarms", "pass", "no exact alarm permissions");
   const warns: string[] = [];
   const items: string[] = [];
   if (use) warns.push("USE_EXACT_ALARM declared. Play only allows it for alarm, timer and calendar apps");
@@ -615,13 +671,13 @@ export function checkRestrictedPermissions(ctx: CheckContext): CheckResult {
     if (hasPermission(m, "READ_CONTACTS")) add("READ_CONTACTS", `at target 37+ needs a declaration from ${fmtDate(DATES.permissionsApi37)}, or use the Contact Picker`, DATES.permissionsApi37);
     if (hasPermission(m, "ACCESS_LOCAL_NETWORK")) add("ACCESS_LOCAL_NETWORK", `at target 37+ needs a declaration from ${fmtDate(DATES.localNetworkApi37)}`, DATES.localNetworkApi37);
   }
-  if (!names.length) return result("restricted-permissions", "pass", "no restricted permissions that need a declaration", sourceManifestNote(ctx));
+  if (!names.length) return result("restricted-permissions", "pass", "no restricted permissions that need a declaration");
   deadlines.sort();
   return result(
     "restricted-permissions",
     "warn",
     `${names.length} restricted ${names.length === 1 ? "permission needs" : "permissions need"} a Play Console declaration or a qualifying use`,
-    [...items, ...sourceManifestNote(ctx)],
+    items,
     deadlines[0] ?? null,
   );
 }

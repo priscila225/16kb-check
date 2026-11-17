@@ -11,7 +11,7 @@ import { scanProject, type ProjectScan } from "./project";
 import { scanBinary, type BinaryScan } from "./binary";
 import { CHECKS, detectFormFactor, type CheckContext, type CheckResult, type CheckStatus, type SdkLookup } from "./checks";
 import { CHECK_IDS, PLAY_MIN_TARGET, type CheckId } from "./rules";
-import { formatCheckText, toCheckJson } from "./output";
+import { formatCheckGithub, formatCheckText, SOURCE_MANIFEST_NOTE, toCheckJson, type OutputFormat } from "./output";
 
 export const CHECK_HELP = `play-preflight check — check an Android app against Google Play's current rules.
 
@@ -27,14 +27,21 @@ Inputs (combine them; the APK wins for the manifest and native libraries):
 
 Output:
   --json                Print JSON
+  --format text|github  text (default) or github (::error / ::warning annotations, plus the report)
+  --verbose, -v         Show ready SDK rows, side notes, every activity, and links on all checks
   --strict              Exit 1 on WARN too (default: only FAIL)
   --only <ids>          Run only these checks (comma separated)
   --skip <ids>          Skip these checks (comma separated)
   --offline             No network at all. Skips the public SDK lookup
   --no-submit           Download the public SDK list, but never send unknown SDK names
   --no-auto-check       Same as --no-submit
-  --no-color            Disable color
+  --no-color            Disable color (also when stdout is not a TTY, or NO_COLOR is set)
   --help                Show this help
+
+Exit codes:
+  0  no failures (warnings are ok unless --strict)
+  1  at least one FAIL, or a WARN with --strict
+  2  bad usage or a runtime error (missing project, unreadable APK, unknown flag)
 
 Check ids:
   ${CHECK_IDS.join(", ")}
@@ -57,6 +64,8 @@ export type CheckOptions = {
   module?: string;
   targetSdk?: number;
   json: boolean;
+  format: OutputFormat;
+  verbose: boolean;
   strict: boolean;
   only?: CheckId[];
   skip: CheckId[];
@@ -91,6 +100,8 @@ export function parseCheckArgv(argv: string[], env: NodeJS.ProcessEnv = process.
       "no-submit": { type: "boolean", default: false },
       "no-auto-check": { type: "boolean", default: false },
       "no-color": { type: "boolean", default: false },
+      format: { type: "string" },
+      verbose: { type: "boolean", default: false, short: "v" },
       help: { type: "boolean", default: false, short: "h" },
     },
     allowPositionals: true,
@@ -102,6 +113,10 @@ export function parseCheckArgv(argv: string[], env: NodeJS.ProcessEnv = process.
     targetSdk = Number(values["target-sdk"]);
     if (!Number.isInteger(targetSdk) || targetSdk < 1 || targetSdk > 99) throw new Error("--target-sdk must be a number like 36");
   }
+  const formatRaw = values.format ?? "text";
+  if (formatRaw !== "text" && formatRaw !== "github") {
+    throw new Error(`Unknown --format: ${formatRaw}. Use text or github.`);
+  }
   return {
     path: values.path ?? positionals[0],
     apk: values.apk,
@@ -109,6 +124,8 @@ export function parseCheckArgv(argv: string[], env: NodeJS.ProcessEnv = process.
     module: values.module,
     targetSdk,
     json: !!values.json,
+    format: formatRaw,
+    verbose: !!values.verbose,
     strict: !!values.strict,
     only: parseIds(values.only, "--only"),
     skip: parseIds(values.skip, "--skip") ?? [],
@@ -281,7 +298,8 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
   const counts = countStatuses(results);
   const notes = [...(project?.issues ?? [])];
   const manifestNote = binary?.manifest ? undefined : (binary?.manifestNote ?? project?.manifestNote);
-  if (manifestNote) notes.push(manifestNote);
+  const sourceManifest = !binary && (manifestNote === SOURCE_MANIFEST_NOTE || (!!manifestNote && manifestKind === "source"));
+  if (manifestNote && manifestNote !== SOURCE_MANIFEST_NOTE) notes.push(manifestNote);
   const header = {
     module: project?.appModule === "" ? "(root)" : project?.appModule,
     binary: binary ? `${binary.kind.toUpperCase()} ${binary.file}` : undefined,
@@ -304,12 +322,16 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
   };
 
   if (opts.json) {
-    const body = toCheckJson({ version: VERSION, header, results, counts, notes, privacy, exitCode, now: io.now ?? new Date() });
+    const jsonNotes = sourceManifest ? [SOURCE_MANIFEST_NOTE, ...notes] : notes;
+    const body = toCheckJson({ version: VERSION, header, results, counts, notes: jsonNotes, privacy, exitCode, now: io.now ?? new Date() });
     io.stdout.write(JSON.stringify(body, null, 2) + "\n");
   } else {
+    const env = io.env ?? process.env;
     const color =
-      opts.color === "auto" ? !!io.stdout.isTTY && !process.env.NO_COLOR && process.env.FORCE_COLOR !== "0" : opts.color;
-    io.stdout.write(formatCheckText({ header, results, counts, notes, privacy, color }));
+      opts.color === "auto" ? !!io.stdout.isTTY && !env.NO_COLOR && env.FORCE_COLOR !== "0" : opts.color;
+    const payload = { header, results, counts, notes, privacy, verbose: opts.verbose, sourceManifest };
+    if (opts.format === "github") io.stdout.write(formatCheckGithub(payload));
+    else io.stdout.write(formatCheckText({ ...payload, color }));
   }
   return { exitCode, results, counts };
 }

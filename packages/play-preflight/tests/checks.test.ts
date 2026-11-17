@@ -102,9 +102,12 @@ test("large-screens: locked activities warn, free ones don't, games skip, opt-ou
   const locked = await one("large-locked", "large-screens");
   assert.equal(locked.status, "warn");
   assert.match(locked.detail, /^2 activities/);
-  assert.ok(locked.items.some((i) => i.includes("sensorPortrait") && i.includes("resizeableActivity=false")));
-  assert.ok(locked.items.some((i) => i.includes("maxAspectRatio=2.1")));
-  assert.ok(!locked.items.some((i) => i.includes(".Free")));
+  assert.ok(locked.items.some((i) => i === "CameraActivity  app/src/main/AndroidManifest.xml:11  sensorPortrait, resizeableActivity=false"), locked.items.join("\n"));
+  assert.ok(locked.items.some((i) => i === "Wide  app/src/main/AndroidManifest.xml:12  maxAspectRatio=2.1"), locked.items.join("\n"));
+  assert.ok(locked.items.some((i) => i.startsWith("Fix:")));
+  assert.ok(!locked.items.some((i) => /Free/.test(i)));
+  assert.ok(locked.locations?.some((l) => l.file === "app/src/main/AndroidManifest.xml" && l.line === 11 && /CameraActivity/.test(l.message)));
+  assert.ok(locked.locations?.some((l) => l.file === "app/src/main/AndroidManifest.xml" && l.line === 12 && /Wide/.test(l.message)));
   assert.equal((await one("large-game", "large-screens")).status, "skip");
   const opt = await one("large-optout", "large-screens");
   assert.equal(opt.status, "warn");
@@ -217,7 +220,10 @@ test("header: minSdk and compileSdk come from buildSrc constants and the version
   assert.equal(cat.json.input.targetSdk, 35);
   assert.match(cat.json.input.compileSdkFrom ?? "", /version catalog/);
   const text = await runText([fixture("checks/sdk-catalog"), "--offline", "--only", "target-api"]);
-  assert.match(text.out.split("\n")[0], /targetSdk 35, from .*; minSdk 23; compileSdk 36\)/);
+  assert.match(text.out.split("\n")[0], /source only  ·  targetSdk 35  minSdk 23  compileSdk 36/);
+  const verbose = await runText([fixture("checks/sdk-catalog"), "--offline", "--only", "target-api", "--verbose"]);
+  assert.match(verbose.out.split("\n")[0], /targetSdk 35, from /);
+  assert.match(verbose.out.split("\n")[0], /compileSdk 36, from /);
   const plain = await runJson([fixture("checks/fgs-ok"), "--offline", "--only", "target-api"]);
   assert.equal(plain.json.input.minSdk, 24);
   assert.equal(plain.json.input.compileSdk, 36);

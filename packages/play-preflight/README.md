@@ -6,7 +6,7 @@ Check an Android app against Google Play's current rules before you ship. One co
 npx play-preflight check
 ```
 
-It reads your Gradle files, manifests and resources (or an APK / AAB) and prints one line per rule: **PASS**, **WARN**, **FAIL**, **SKIP**, or **INFO**. Each line links to Google's official page and to a plain-English explainer on [devbooth.dev](https://devbooth.dev). Any FAIL exits with code 1, so it drops straight into CI.
+It reads your Gradle files, manifests and resources (or an APK / AAB) and prints a scannable report: **FAIL**, **WARN** and **INFO** first, with details and links, then a compact **PASS** list and any **SKIP**s on one line. Links to Google's official page and a plain-English explainer on [devbooth.dev](https://devbooth.dev) appear on findings; `--verbose` shows them on every check. Any FAIL exits with code 1, so it drops straight into CI.
 
 `play-preflight` used to be [`16kb-check`](https://www.npmjs.com/package/16kb-check). The old 16 KB SDK table is still here as `npx play-preflight 16kb`.
 
@@ -32,64 +32,31 @@ The API 37 target deadline isn't announced yet, so play-preflight doesn't print 
 
 ## Sample output
 
-From `npx play-preflight check tests/fixtures/legacy-app --offline --no-color`:
+From `npx play-preflight check tests/fixtures/ready-app --offline --no-color` (17 lines; the same fixture was 48 lines before this layout):
 
 ```
-play-preflight check  ·  app (targetSdk 35, from app/build.gradle via build.gradle)
+play-preflight check  ·  app  ·  source only  ·  targetSdk 36  minSdk 24  compileSdk 36
+9 pass · 0 warn · 0 fail · 2 skip
+Read from source manifests. Permissions and services that libraries add at build time aren't included. Build once (or pass --apk) for the full picture.
 
-FAIL  Target API level        targets 35, Play needs 36 for new apps and updates since Aug 31, 2026
-      - The extension ran until Nov 1, 2026, so the rule is fully in force.
-      Rule: https://support.google.com/googleplay/android-developer/answer/11926878
-      → https://devbooth.dev/rules/play-target-api
-WARN  16 KB page size         AGP 8.4.0 is below 8.5.1. Play blocks updates that aren't ready from Feb 1, 2027
-      - SDK lookup skipped (--offline).
-      - Android Gradle Plugin 8.4.0 is below 8.5.1. Upgrade to AGP 8.5.1 or newer so uncompressed .so files are zip-aligned to 16 KB (or set jniLibs.useLegacyPackaging = true).
-      Rule: https://developer.android.com/guide/practices/page-sizes
-      → https://devbooth.dev/deadlines/play-16kb
-FAIL  Play Billing Library    7.1.1: the cutoff for version 7 and older was Aug 31, 2026 (extension Nov 1, 2026). Update to 8 or later
-      - From com.android.billingclient:billing.
-      Rule: https://developer.android.com/google/play/billing/deprecation-faq
-      → https://devbooth.dev/deadlines/play-billing-9
-FAIL  Foreground services     FOREGROUND_SERVICE is declared but no <service> has android:foregroundServiceType. startForeground() throws MissingForegroundServiceTypeException
-      - Libraries can add services at build time. Build once or pass --apk to see them.
-      Rule: https://developer.android.com/about/versions/14/changes/fgs-types-required
-      → https://devbooth.dev/rules/foreground-service-types
-WARN  Edge to edge            windowOptOutEdgeToEdgeEnforcement stops working when you target 36, which Play requires for updates
-      - app/src/main/res/values/themes.xml
-      Rule: https://developer.android.com/about/versions/16/behavior-changes-16
-      → https://devbooth.dev/rules/edge-to-edge
-WARN  Large screens           1 activity locks orientation or size. It will be ignored on screens 600dp and wider once you target 36
-      - .PlayerActivity: screenOrientation=portrait
-      Rule: https://developer.android.com/about/versions/16/behavior-changes-16
-      → https://devbooth.dev/rules/large-screens-orientation
-WARN  Predictive back         1 file uses the old back APIs, which stop being called once you target 36
-      - app/src/main/java/dev/example/legacy/MainActivity.kt: overrides onBackPressed()
-      Rule: https://developer.android.com/about/versions/16/behavior-changes-16
-      → https://devbooth.dev/rules/predictive-back
-WARN  Photo & video access    READ_MEDIA_IMAGES declared. Needs a Play Console declaration or the photo picker
-      - Use the photo picker (androidx.activity 1.7.0+) unless the app's core use needs broad access.
-      - Read from source manifests. Libraries can add permissions at build time, so build once or pass --apk.
-      Rule: https://support.google.com/googleplay/android-developer/answer/14115180
-      → https://devbooth.dev/rules/photo-video-permissions
-WARN  Exact alarms            USE_EXACT_ALARM declared. Play only allows it for alarm, timer and calendar apps
-      Rule: https://support.google.com/googleplay/android-developer/answer/13161072
-      → https://devbooth.dev/rules/exact-alarms
-WARN  Restricted permissions  2 restricted permissions need a Play Console declaration or a qualifying use
-      - QUERY_ALL_PACKAGES: needs a declaration and a core use that requires it. Prefer <queries>
-      - ACCESS_BACKGROUND_LOCATION: needs a Play Console declaration and review
-      - Read from source manifests. Libraries can add permissions at build time, so build once or pass --apk.
-      Rule: https://support.google.com/googleplay/android-developer/answer/13161072
-      → https://devbooth.dev/deadlines/play-permissions
-INFO  Account deletion        sign-in SDK found (Firebase Auth). Make sure in-app and web account deletion exist
-      - If users can create accounts, Play needs an in-app way to delete the account and a web link in the Data safety form.
-      Rule: https://support.google.com/googleplay/android-developer/answer/13327111
-      → https://devbooth.dev/rules/account-deletion
+PASS  Target API level        targets 36. Play needs 36 for new apps and updates since Aug 31, 2026
+PASS  Play Billing Library    9.0.0 (supported until Aug 31, 2028)
+PASS  Foreground services     1 typed service, permissions in place
+PASS  Edge to edge            no windowOptOutEdgeToEdgeEnforcement opt-out found
+PASS  Large screens           no orientation, resizability or aspect ratio locks
+PASS  Predictive back         no onBackPressed() overrides or KEYCODE_BACK handling found
+PASS  Photo & video access    no broad photo, video or storage permissions
+PASS  Exact alarms            no exact alarm permissions
+PASS  Restricted permissions  no restricted permissions that need a declaration
+SKIP  16 KB page size (offline and no APK/AAB given, so nothing to check. Pass --apk or --aab to check the native libraries), Account deletion (no sign-in SDK found)
 
-Note: Read from source manifests. Permissions and services that libraries add at build time aren't included. Build once (or pass --apk) for the full picture.
-
-0 pass · 7 warn · 3 fail · 0 skip · 1 info
+9 pass · 0 warn · 0 fail · 2 skip
 Checked fully offline. Nothing left this machine.
 ```
+
+`--verbose` (or `-v`) adds Rule and devbooth links on every check, side notes like "Next: API 37", and `from` details in the header. `--format github` prints `::error` / `::warning` / `::notice` annotations with file and line when known, then the same report, which GitHub Actions will attach to the pull request.
+
+A failing app lists FAIL, then WARN, then INFO, each with details. Large-screen locks look like `PlayerActivity  app/src/main/AndroidManifest.xml:14  portrait`, with a fix hint and at most five activities unless you pass `--verbose`.
 
 ## Usage
 
@@ -106,6 +73,12 @@ npx play-preflight check --aab app/build/outputs/bundle/release/app-release.aab
 
 # Machine-readable output
 npx play-preflight check --json
+
+# GitHub Actions annotations
+npx play-preflight check --format github
+
+# Show every link, side note and ready SDK
+npx play-preflight check --verbose
 
 # Pick checks
 npx play-preflight check --only target-api,16kb
@@ -128,14 +101,16 @@ npx play-preflight 16kb
 | `--aab <file>` | Read the `.so` files from an AAB. Manifest checks use the project folder |
 | `--module <name>` | App module to check when there are several (default: `app`) |
 | `--target-sdk <n>` | Use this targetSdk when it can't be resolved from Gradle |
-| `--json` | JSON with `{ id, status, title, detail, deadline, source, link, items }` per check. The `16kb` check also has `sdk` with numeric counts (`checked`, `ready`, `notReady`, `partial`, `unknown`, `checking`, `skippedPrivate`, `testOnlyIgnored`, `buildToolingIgnored`), never SDK names |
+| `--json` | JSON with `{ id, status, title, detail, deadline, source, link, items }` per check. The `16kb` check also has `sdk` with numeric counts (`checked`, `ready`, `notReady`, `partial`, `unknown`, `checking`, `skippedPrivate`, `testOnlyIgnored`, `buildToolingIgnored`), never SDK names. Checks that have a file location also include `locations` with `file`, `line` (when known) and `message` |
+| `--format text\|github` | `text` (default) or `github`, which emits `::error` / `::warning` / `::notice` annotations with file and line when known, plus the report |
+| `--verbose`, `-v` | Show ready SDK rows, side notes, every locked activity, `from` details in the header, and Rule / devbooth links on all checks |
 | `--strict` | Exit 1 on WARN too |
 | `--only <ids>` / `--skip <ids>` | Comma-separated check ids |
 | `--offline` | Skip the SDK lookup. Every other check is already local |
 | `--no-submit`, `--no-auto-check` | Download the public SDK list, but never send unknown SDK names. Same as `PLAY_PREFLIGHT_NO_SUBMIT=1` |
-| `--no-color` | Plain output |
+| `--no-color` | Plain output. Color is also off when stdout is not a TTY, or when `NO_COLOR` is set |
 
-Exit codes: `0` no failures, `1` at least one FAIL (or WARN with `--strict`), `2` bad input.
+Exit codes: `0` no failures (warnings are ok unless `--strict`), `1` at least one FAIL (or a WARN with `--strict`), `2` bad usage or a runtime error (missing project, unreadable APK, unknown flag).
 
 Requires Node 18 or newer.
 
@@ -165,7 +140,7 @@ jobs:
         with:
           node-version: 20
       - name: Google Play checks
-        run: npx --yes play-preflight check --no-color
+        run: npx --yes play-preflight check --format github
 ```
 
 ## Privacy
@@ -184,7 +159,9 @@ The only network call is the public SDK lookup used by the `16kb` check:
 
 ## The `16kb` command
 
-`npx play-preflight 16kb` is the full 16 KB SDK table that `16kb-check` printed, with the same options (`--path`, `--json`, `--ci`, `--no-color`, plus `--no-submit`). It lists every public SDK you declared with its 16 KB status and the minimum ready version.
+`npx play-preflight 16kb` is the 16 KB SDK table that `16kb-check` printed, with the same options (`--path`, `--json`, `--ci`, `--no-color`, plus `--no-submit` and `--verbose`). By default it shows the counts and only the rows that are not ready, partial, unknown or checking. Use `--verbose` to list ready libraries too.
+
+Exit codes for `16kb`: `0` ok (not-ready libraries are reported, but the command still exits 0 unless `--ci`), `1` if `--ci` was set and a library is not ready or only partially ready, `2` bad usage or a runtime error.
 
 ## License
 

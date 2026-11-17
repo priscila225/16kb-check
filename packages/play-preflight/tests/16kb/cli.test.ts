@@ -70,6 +70,8 @@ test("--help and --version", async () => {
   const help = await capture(["--help"]);
   assert.equal(help.result.exitCode, 0);
   assert.equal(help.out, HELP);
+  assert.match(HELP, /--verbose/);
+  assert.match(HELP, /Exit codes:/);
   const ver = await capture(["--version"]);
   assert.equal(ver.result.exitCode, 0);
   assert.equal(ver.out, `${VERSION}\n`);
@@ -78,7 +80,8 @@ test("--help and --version", async () => {
 test("table output on the fixture includes expected statuses, links, and the deadline", async () => {
   const { result, out } = await capture(["--path", fixture, "--no-color"]);
   assert.equal(result.exitCode, 0);
-  assert.match(out, /SDK\s+Version\s+Status\s+Link/);
+  assert.doesNotMatch(out, /okhttp/, "ready rows are hidden by default");
+  assert.match(out, /5 ready libraries are hidden/);
   assert.match(out, /io\.sentry:sentry-android/);
   assert.match(out, /7\.14\.0/);
   assert.match(out, /not ready/);
@@ -86,8 +89,11 @@ test("table output on the fixture includes expected statuses, links, and the dea
   assert.match(out, /https:\/\/devbooth\.dev\/16kb\/sdk\/sentry-android/);
   assert.match(out, /com\.mapbox\.maps:android/);
   assert.match(out, /partial/);
-  assert.match(out, /okhttp/);
   assert.match(out, /ready/);
+  assert.match(out, /SDK\s+Version\s+Status\s+Link/);
+  const verbose = await capture(["--path", fixture, "--no-color", "--verbose"]);
+  assert.match(verbose.out, /okhttp/);
+  assert.doesNotMatch(verbose.out, /hidden/);
   // Plugins live in their own section, not in the library rows or counts.
   assert.ok(!result.report!.rows.some((r) => r.configuration === "plugin"));
   assert.match(out, /Build plugins \(build-time only/);
@@ -140,8 +146,10 @@ test("bundles fixture: bundles resolve, plugins are separate, AGP below 8.5.1 wa
   const { result, out } = await capture(["--path", bundlesFixture, "--no-color"]);
   assert.equal(result.exitCode, 0);
   assert.doesNotMatch(out, /Could not resolve/);
+  assert.match(out, /ready libraries are hidden/);
+  const verbose = await capture(["--path", bundlesFixture, "--no-color", "--verbose"]);
   for (const c of ["com.squareup.moshi:moshi", "com.squareup.retrofit2:retrofit", "androidx.appcompat:appcompat", "androidx.compose.material3:material3-adaptive-navigation-suite"]) {
-    assert.ok(out.includes(c), `${c} is shown in full`);
+    assert.ok(verbose.out.includes(c), `${c} is shown in full`);
   }
   assert.match(out, /Warning: Android Gradle Plugin 8\.3\.2 is below 8\.5\.1/);
   assert.match(out, /com\.android\.tools\.build:gradle\s+8\.3\.2/);

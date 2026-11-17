@@ -8,7 +8,15 @@ export type XmlElement = {
   attrs: Record<string, string>;
   children: XmlElement[];
   text: string;
+  /** 1-based line of the opening tag, when the document is text. */
+  line?: number;
 };
+
+function countNewlines(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) if (s[i] === "\n") n++;
+  return n;
+}
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 
@@ -27,27 +35,40 @@ const ATTR = /([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 /** Parse an XML document. Returns a synthetic "#document" root whose children are the top-level elements. */
 export function parseXml(input: string): XmlElement {
   const text = input.replace(/^\uFEFF/, "");
-  const root: XmlElement = { name: "#document", attrs: {}, children: [], text: "" };
+  const root: XmlElement = { name: "#document", attrs: {}, children: [], text: "", line: 1 };
   const stack: XmlElement[] = [root];
   let i = 0;
+  let line = 1;
   while (i < text.length) {
     const lt = text.indexOf("<", i);
     if (lt < 0) break;
-    if (lt > i) stack[stack.length - 1].text += decodeEntities(text.slice(i, lt));
+    if (lt > i) {
+      const chunk = text.slice(i, lt);
+      stack[stack.length - 1].text += decodeEntities(chunk);
+      line += countNewlines(chunk);
+    }
+    const startLine = line;
     if (text.startsWith("<!--", lt)) {
       const end = text.indexOf("-->", lt + 4);
-      i = end < 0 ? text.length : end + 3;
+      const next = end < 0 ? text.length : end + 3;
+      line += countNewlines(text.slice(lt, next));
+      i = next;
       continue;
     }
     if (text.startsWith("<![CDATA[", lt)) {
       const end = text.indexOf("]]>", lt + 9);
-      stack[stack.length - 1].text += text.slice(lt + 9, end < 0 ? text.length : end);
-      i = end < 0 ? text.length : end + 3;
+      const close = end < 0 ? text.length : end;
+      stack[stack.length - 1].text += text.slice(lt + 9, close);
+      const next = end < 0 ? text.length : end + 3;
+      line += countNewlines(text.slice(lt, next));
+      i = next;
       continue;
     }
     if (text.startsWith("<?", lt)) {
       const end = text.indexOf("?>", lt + 2);
-      i = end < 0 ? text.length : end + 2;
+      const next = end < 0 ? text.length : end + 2;
+      line += countNewlines(text.slice(lt, next));
+      i = next;
       continue;
     }
     if (text.startsWith("<!", lt)) {
@@ -60,7 +81,9 @@ export function parseXml(input: string): XmlElement {
         else if (c === "]") depth--;
         else if (c === ">" && depth <= 0) break;
       }
-      i = j + 1;
+      const next = j + 1;
+      line += countNewlines(text.slice(lt, next));
+      i = next;
       continue;
     }
     // Find the end of the tag, respecting quoted attribute values.
@@ -74,7 +97,9 @@ export function parseXml(input: string): XmlElement {
       else if (c === ">") break;
     }
     const raw = text.slice(lt + 1, j);
-    i = j + 1;
+    const next = j + 1;
+    line += countNewlines(text.slice(lt, next));
+    i = next;
     if (raw.startsWith("/")) {
       const name = raw.slice(1).trim();
       // Pop to the matching element; tolerate stray closing tags.
@@ -90,7 +115,7 @@ export function parseXml(input: string): XmlElement {
     const body = selfClosing ? raw.slice(0, -1) : raw;
     const nameMatch = /^\s*([^\s/>]+)/.exec(body);
     if (!nameMatch) continue;
-    const el: XmlElement = { name: nameMatch[1], attrs: {}, children: [], text: "" };
+    const el: XmlElement = { name: nameMatch[1], attrs: {}, children: [], text: "", line: startLine };
     const rest = body.slice(nameMatch[0].length);
     for (const m of rest.matchAll(ATTR)) el.attrs[m[1]] = decodeEntities(m[2] ?? m[3] ?? "");
     stack[stack.length - 1].children.push(el);

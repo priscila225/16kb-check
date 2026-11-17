@@ -10,9 +10,11 @@ export type ManifestComponent = {
   /** Intent filter actions. */
   actions: string[];
   file: string;
+  /** 1-based line of the component tag in `file`, when known. */
+  line?: number;
 };
 
-export type ManifestPermission = { name: string; maxSdk?: number; file: string };
+export type ManifestPermission = { name: string; maxSdk?: number; file: string; line?: number };
 
 export type ManifestInfo = {
   /** The manifest's package attribute, when it has one. */
@@ -30,6 +32,9 @@ export type ManifestInfo = {
   services: ManifestComponent[];
   receivers: ManifestComponent[];
   files: string[];
+  /** File and line of the <application> tag that won the merge, when known. */
+  applicationFile?: string;
+  applicationLine?: number;
 };
 
 export function emptyManifest(): ManifestInfo {
@@ -74,6 +79,7 @@ function component(el: XmlElement, file: string): ManifestComponent {
     metaData: nameValue(childrenNamed(el, "meta-data")),
     actions,
     file,
+    line: el.line,
   };
 }
 
@@ -100,7 +106,7 @@ export function readManifest(doc: XmlElement, file: string): ManifestInfo & { re
         m.removedPermissions.push(name);
         continue;
       }
-      m.permissions.push({ name, maxSdk: toInt(p.attrs["android:maxSdkVersion"]), file });
+      m.permissions.push({ name, maxSdk: toInt(p.attrs["android:maxSdkVersion"]), file, line: p.line });
     }
   }
   for (const f of childrenNamed(manifest, "uses-feature")) {
@@ -110,6 +116,8 @@ export function readManifest(doc: XmlElement, file: string): ManifestInfo & { re
   const app = firstChild(manifest, "application");
   if (app) {
     m.application = { ...app.attrs };
+    m.applicationFile = file;
+    m.applicationLine = app.line;
     m.appProperties = nameValue(childrenNamed(app, "property"));
     m.appMetaData = nameValue(childrenNamed(app, "meta-data"));
     for (const a of childrenNamed(app, "activity")) if (a.attrs["tools:node"] !== "remove") m.activities.push(component(a, file));
@@ -134,6 +142,10 @@ export function mergeManifests(parts: (ManifestInfo & { removedPermissions?: str
     if (p.minSdk !== undefined) out.minSdk = p.minSdk;
     if (p.compileSdk !== undefined) out.compileSdk = p.compileSdk;
     Object.assign(out.application, p.application);
+    if (p.applicationFile || p.applicationLine !== undefined) {
+      out.applicationFile = p.applicationFile ?? p.files[0];
+      out.applicationLine = p.applicationLine;
+    }
     Object.assign(out.appProperties, p.appProperties);
     Object.assign(out.appMetaData, p.appMetaData);
   }

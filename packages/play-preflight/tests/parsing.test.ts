@@ -87,3 +87,26 @@ test("minSdk and compileSdk lines: Groovy, Kotlin, the release() DSL and android
   assert.equal(resolveSdk("compile", { name: "b", text: "compileSdk {\n    version = release(36)\n}" }, ctx, []).value, 36);
   assert.equal(resolveSdk("compile", { name: "b", text: "compileSdk = computeIt()" }, ctx, []).value, undefined);
 });
+
+test("XML opening tags carry 1-based line numbers", () => {
+  const doc = parseXml(`<?xml version="1.0"?>
+<manifest>
+  <application>
+    <activity android:name=".A"/>
+    <activity android:name=".B" />
+  </application>
+</manifest>
+`);
+  const manifest = doc.children[0];
+  assert.equal(manifest.name, "manifest");
+  assert.equal(manifest.line, 2);
+  const app = manifest.children[0];
+  assert.equal(app.name, "application");
+  assert.equal(app.line, 3);
+  assert.equal(app.children[0].line, 4);
+  assert.equal(app.children[1].line, 5);
+  const info = readManifest(doc, "app/src/main/AndroidManifest.xml");
+  assert.equal(info.applicationLine, 3);
+  assert.equal(info.activities[0].line, 4);
+  assert.equal(info.activities[0].name, ".A");
+});

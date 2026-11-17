@@ -23,11 +23,17 @@ Options:
   --path <dir>         Project root (default: current directory)
   --json               Print JSON instead of a table
   --ci                 Exit 1 if any library is not ready or only partially ready
+  --verbose, -v        List ready libraries too (hidden by default)
   --no-submit          Download the public SDK list, but never send unknown SDK names
   --no-auto-check      Same as --no-submit
-  --no-color           Disable color
+  --no-color           Disable color (also when stdout is not a TTY, or NO_COLOR is set)
   --help               Show this help
   --version            Print the version
+
+Exit codes:
+  0  ok (not-ready libraries are reported, but the command still exits 0 unless --ci)
+  1  --ci was set and a library is not ready or only partially ready
+  2  bad usage or a runtime error (no project, catalog download failed, unknown flag)
 
 Privacy:
   Your Gradle and TOML files stay on this machine. Private and internal
@@ -53,6 +59,7 @@ export type CliOptions = {
   path: string;
   json: boolean;
   ci: boolean;
+  verbose: boolean;
   noSubmit: boolean;
   color: ColorMode;
   help: boolean;
@@ -70,8 +77,9 @@ export function parseArgv(argv: string[], env: NodeJS.ProcessEnv = process.env):
       "no-submit": { type: "boolean", default: false },
       "no-auto-check": { type: "boolean", default: false },
       "no-color": { type: "boolean", default: false },
+      verbose: { type: "boolean", default: false, short: "v" },
       help: { type: "boolean", default: false, short: "h" },
-      version: { type: "boolean", default: false, short: "v" },
+      version: { type: "boolean", default: false },
       deep: { type: "boolean", default: false },
     },
     allowPositionals: true,
@@ -81,6 +89,7 @@ export function parseArgv(argv: string[], env: NodeJS.ProcessEnv = process.env):
     path: values.path || process.cwd(),
     json: !!values.json,
     ci: !!values.ci,
+    verbose: !!values.verbose,
     noSubmit: !!values["no-submit"] || !!values["no-auto-check"] || envNoSubmit(env),
     color: values["no-color"] ? "never" : "auto",
     help: !!values.help,
@@ -149,7 +158,7 @@ export async function run(argv: string[], io: RunIo = { stdout: process.stdout, 
   if (opts.json) {
     io.stdout.write(JSON.stringify(toJson(report, skippedPrivate, extras), null, 2) + "\n");
   } else {
-    io.stdout.write(formatTable(report, skippedPrivate, color, extras));
+    io.stdout.write(formatTable(report, skippedPrivate, color, extras, opts.verbose));
   }
   const line = privacyLine({
     offline: false,

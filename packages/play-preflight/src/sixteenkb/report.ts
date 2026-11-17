@@ -212,18 +212,28 @@ function visibleLen(text: string): number {
  * value, the link is the last column, and the minimum 16 KB version for rows that need
  * attention goes on an indented second line.
  */
-export function formatTable(report: CheckReport, skippedPrivate: number, color: boolean, extras: ReportExtras = {}): string {
+export function formatTable(
+  report: CheckReport,
+  skippedPrivate: number,
+  color: boolean,
+  extras: ReportExtras = {},
+  verbose = false,
+): string {
   const rows = rowsFromReport(report);
   const counts = countStatuses(rows);
   const lines: string[] = [];
+  const hiddenReady = verbose ? [] : rows.filter((r) => r.status === "ready");
+  const visible = verbose ? rows : rows.filter((r) => r.status !== "ready");
 
-  const sdkW = Math.max(3, ...rows.map((r) => r.sdk.length));
-  const verW = Math.max(7, ...rows.map((r) => r.version.length));
+  const sdkW = Math.max(3, ...visible.map((r) => r.sdk.length), 3);
+  const verW = Math.max(7, ...visible.map((r) => r.version.length), 7);
   const statusW = 9;
 
-  const header = [pad("SDK", sdkW), pad("Version", verW), pad("Status", statusW), "Link"].join("  ");
-  lines.push(paint(color, ANSI.bold, header));
-  lines.push(paint(color, ANSI.dim, ["─".repeat(sdkW), "─".repeat(verW), "─".repeat(statusW), "─".repeat(4)].join("  ")));
+  if (visible.length) {
+    const header = [pad("SDK", sdkW), pad("Version", verW), pad("Status", statusW), "Link"].join("  ");
+    lines.push(paint(color, ANSI.bold, header));
+    lines.push(paint(color, ANSI.dim, ["─".repeat(sdkW), "─".repeat(verW), "─".repeat(statusW), "─".repeat(4)].join("  ")));
+  }
 
   const statusColor = (s: CliStatus): string => {
     if (s === "ready") return ANSI.green;
@@ -233,7 +243,7 @@ export function formatTable(report: CheckReport, skippedPrivate: number, color: 
     return ANSI.gray;
   };
 
-  for (const r of rows) {
+  for (const r of visible) {
     const cells = [
       pad(r.sdk, sdkW),
       pad(r.version, verW),
@@ -265,6 +275,10 @@ export function formatTable(report: CheckReport, skippedPrivate: number, color: 
     `${counts.unknown} unknown`,
   ];
   lines.push(`${rows.length} public ${rows.length === 1 ? "library" : "libraries"}: ${parts.join(", ")}.`);
+  if (hiddenReady.length) {
+    const n = hiddenReady.length;
+    lines.push(`${n} ready ${n === 1 ? "library is" : "libraries are"} hidden. Use --verbose to list them.`);
+  }
   if (skippedPrivate) {
     const n = skippedPrivate;
     lines.push(

@@ -44,7 +44,7 @@ export type SdkCounts = {
   testOnlyIgnored: number;
   buildToolingIgnored: number;
 };
-export type JsonCheck = { id: string; status: string; title: string; detail: string; deadline: string | null; source: string; link: string; items: string[]; sdk?: SdkCounts };
+export type JsonCheck = { id: string; status: string; title: string; detail: string; deadline: string | null; source: string; link: string; items: string[]; sdk?: SdkCounts; locations?: { file: string; line?: number; message: string }[] };
 export type JsonOut = {
   tool: string;
   version: string;
