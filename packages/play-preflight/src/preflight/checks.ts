@@ -4,7 +4,8 @@ import { countStatuses, rowsFromReport } from "../sixteenkb/report";
 import type { BinaryScan } from "./binary";
 import { hasPermission, isFalse, isTrue, sameComponent, type ManifestComponent, type ManifestInfo } from "./manifest";
 import type { TextFile } from "./targetsdk";
-import { DATES, PLAY_MIN_TARGET, RULES, fmtDate, type CheckId, type FormFactor } from "./rules";
+import { PLAY_MIN_TARGET, RULES, fmtDate, type CheckId, type FormFactor } from "./rules";
+import type { PlayRulesChecks, ResolvedPlayRules } from "./play-rules";
 
 export type CheckStatus = "pass" | "warn" | "fail" | "skip" | "info";
 
@@ -74,7 +75,12 @@ export type CheckContext = {
   binary?: BinaryScan;
   sdk: SdkLookup;
   agp?: AgpCheck;
+  playRules: ResolvedPlayRules;
 };
+
+function play(ctx: CheckContext): PlayRulesChecks {
+  return ctx.playRules.rules.checks;
+}
 
 type ResultExtra = Pick<CheckResult, "verboseItems" | "locations">;
 
@@ -140,28 +146,29 @@ export function checkTargetApi(ctx: CheckContext): CheckResult {
   const kind = formFactor === "phone" ? "" : ` for ${formFactor === "tv" ? "TV" : formFactor === "wear" ? "Wear OS" : "Automotive"} apps`;
   if (value === undefined) {
     const where = expr ? ` (set as \`${expr}\` in ${from})` : "";
-    return result("target-api", "skip", `couldn't resolve targetSdk${where}. Pass --target-sdk <n>, build once, or use --apk`, [], DATES.targetApi36);
+    return result("target-api", "skip", `couldn't resolve targetSdk${where}. Pass --target-sdk <n>, build once, or use --apk`, [], play(ctx)["target-api"].since);
   }
   const next = value < 37 ? ["Next: API 37. Google hasn't announced that date yet."] : [];
   if (value >= required) {
     return result(
       "target-api",
       "pass",
-      `targets ${value}. Play needs ${required}${kind} for new apps and updates since ${fmtDate(DATES.targetApi36)}`,
+      `targets ${value}. Play needs ${required}${kind} for new apps and updates since ${fmtDate(play(ctx)["target-api"].since)}`,
       [],
-      DATES.targetApi36,
+      play(ctx)["target-api"].since,
       next.length ? { verboseItems: next } : {},
     );
   }
   const items: string[] = [];
-  if (formFactor === "phone" && value < 35) items.push("Below API 35, existing apps stop showing to new users on newer Android versions.");
-  items.push(`The extension ran until ${fmtDate(DATES.targetApi36Extension)}, so the rule is fully in force.`);
+  const hiddenBelow = play(ctx)["target-api"].existingAppsHiddenBelow;
+  if (formFactor === "phone" && value < hiddenBelow) items.push(`Below API ${hiddenBelow}, existing apps stop showing to new users on newer Android versions.`);
+  items.push(`The extension ran until ${fmtDate(play(ctx)["target-api"].extensionEnded)}, so the rule is fully in force.`);
   return result(
     "target-api",
     "fail",
-    `targets ${value}, Play needs ${required}${kind} for new apps and updates since ${fmtDate(DATES.targetApi36)}`,
+    `targets ${value}, Play needs ${required}${kind} for new apps and updates since ${fmtDate(play(ctx)["target-api"].since)}`,
     items,
-    DATES.targetApi36,
+    play(ctx)["target-api"].since,
   );
 }
 
@@ -193,7 +200,7 @@ function withSdk(r: CheckResult, ctx: CheckContext): CheckResult {
 export function check16kb(ctx: CheckContext): CheckResult {
   const parts: { status: CheckStatus; text: string }[] = [];
   const items: string[] = [];
-  const when = `Play blocks updates that aren't ready from ${fmtDate(DATES.sixteenKbBlock)}`;
+  const when = `Play blocks updates that aren't ready from ${fmtDate(play(ctx)["16kb"].blockFrom)}`;
   const say = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
   if (ctx.binary) {
@@ -262,14 +269,14 @@ export function check16kb(ctx: CheckContext): CheckResult {
         : sdk.status === "error"
           ? "couldn't reach the SDK catalog and no APK/AAB given"
           : "no dependencies or native libraries found";
-    return withSdk(result("16kb", "skip", why, items, DATES.sixteenKbBlock, readyItems.length ? { verboseItems: readyItems } : {}), ctx);
+    return withSdk(result("16kb", "skip", why, items, play(ctx)["16kb"].blockFrom, readyItems.length ? { verboseItems: readyItems } : {}), ctx);
   }
   const status = worst(parts.map((p) => p.status));
   const lead = parts.filter((p) => p.status === status).map((p) => p.text);
   const rest = parts.filter((p) => p.status !== status).map((p) => p.text);
   const detail = lead.join("; ") + (status === "fail" || status === "warn" ? `. ${when}` : "");
   return withSdk(
-    result("16kb", status, detail, [...rest, ...items], DATES.sixteenKbBlock, readyItems.length ? { verboseItems: readyItems } : {}),
+    result("16kb", status, detail, [...rest, ...items], play(ctx)["16kb"].blockFrom, readyItems.length ? { verboseItems: readyItems } : {}),
     ctx,
   );
 }
@@ -294,36 +301,37 @@ export function checkBilling(ctx: CheckContext): CheckResult {
   }
   if (!found && ctx.billingMentionedIn) {
     return result("play-billing", "warn", `${ctx.billingMentionedIn} mentions the Play Billing Library, but its version couldn't be resolved`, [
-      `Make sure it's 8 or later. Version 8 is supported until ${fmtDate(DATES.billing8Cutoff)}.`,
+      `Make sure it's ${play(ctx)["play-billing"].currentMajorRequired} or later. Version ${play(ctx)["play-billing"].currentMajorRequired} is supported until ${fmtDate(play(ctx)["play-billing"].v8SupportedUntil)}.`,
     ]);
   }
   if (!found) return result("play-billing", "skip", "Play Billing Library not used");
   const major = version ? Number.parseInt(/^\s*(\d+)/.exec(version)?.[1] ?? "", 10) : Number.NaN;
   if (!Number.isFinite(major)) {
     return result("play-billing", "warn", `found ${from}, but couldn't resolve its version${version ? ` ("${version}")` : ""}`, [
-      `Make sure it's 8 or later. Version 8 is supported until ${fmtDate(DATES.billing8Cutoff)}.`,
+      `Make sure it's ${play(ctx)["play-billing"].currentMajorRequired} or later. Version ${play(ctx)["play-billing"].currentMajorRequired} is supported until ${fmtDate(play(ctx)["play-billing"].v8SupportedUntil)}.`,
     ]);
   }
-  if (major <= 7) {
+  const billing = play(ctx)["play-billing"];
+  if (major < billing.currentMajorRequired) {
     return result(
       "play-billing",
       "fail",
-      `${version}: the cutoff for version 7 and older was ${fmtDate(DATES.billing7Cutoff)} (extension ${fmtDate(DATES.billing7Extension)}). Update to 8 or later`,
+      `${version}: the cutoff for version ${billing.currentMajorRequired - 1} and older was ${fmtDate(billing.v7Cutoff)} (extension ${fmtDate(billing.v7Extension)}). Update to ${billing.currentMajorRequired} or later`,
       [`From ${from}.`],
-      DATES.billing7Cutoff,
+      billing.v7Cutoff,
     );
   }
-  if (major === 8) {
+  if (major === billing.currentMajorRequired) {
     return result(
       "play-billing",
       "warn",
-      `${version} is supported until ${fmtDate(DATES.billing8Cutoff)} (extension to ${fmtDate(DATES.billing8Extension)}). Plan the move to 9`,
+      `${version} is supported until ${fmtDate(billing.v8SupportedUntil)} (extension to ${fmtDate(billing.v8Extension)}). Plan the move to ${billing.nextMajor}`,
       [`From ${from}.`],
-      DATES.billing8Cutoff,
+      billing.v8SupportedUntil,
     );
   }
-  const until = major === 9 ? ` (supported until ${fmtDate(DATES.billing9Cutoff)})` : "";
-  return result("play-billing", "pass", `${version}${until}`, [], major === 9 ? DATES.billing9Cutoff : null);
+  const until = major === billing.nextMajor ? ` (supported until ${fmtDate(billing.v9SupportedUntil)})` : "";
+  return result("play-billing", "pass", `${version}${until}`, [], major === billing.nextMajor ? billing.v9SupportedUntil : null);
 }
 
 // F. Foreground service types
@@ -366,8 +374,9 @@ export function checkForegroundServices(ctx: CheckContext): CheckResult {
   const untyped = m.services.filter((s) => !(s.attrs["android:foregroundServiceType"] ?? "").trim());
   if (!fgsPerm && !typed.length) return result("foreground-services", "skip", "none declared");
   const t = ctx.target.effective;
-  if (t < 34) {
-    return result("foreground-services", "pass", `types are required once you target 34 (you target ${t})`, typed.map((s) => `${s.name}: ${s.attrs["android:foregroundServiceType"]}`));
+  const fgsFrom = play(ctx)["foreground-services"].requiredFromTargetSdk;
+  if (t < fgsFrom) {
+    return result("foreground-services", "pass", `types are required once you target ${fgsFrom} (you target ${t})`, typed.map((s) => `${s.name}: ${s.attrs["android:foregroundServiceType"]}`));
   }
 
   const fails: string[] = [];
@@ -415,8 +424,9 @@ export function checkForegroundServices(ctx: CheckContext): CheckResult {
       if (type === "specialUse" && !s.properties["android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"]) {
         fails.push(`${s.name}: specialUse needs a <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE">`);
       }
-      if ((type === "dataSync" || type === "mediaProcessing") && t >= 35) {
-        warns.push(`${s.name}: ${type} has a 6 h per 24 h time limit on Android 15+ when you target 35+`);
+      if ((type === "dataSync" || type === "mediaProcessing") && t >= play(ctx)["foreground-services"].timeLimitFromTargetSdk) {
+        const limitAt = play(ctx)["foreground-services"].timeLimitFromTargetSdk;
+        warns.push(`${s.name}: ${type} has a 6 h per 24 h time limit on Android 15+ when you target ${limitAt}+`);
       }
       if (type === "systemExempted") warns.push(`${s.name}: systemExempted is only allowed for specific kinds of apps`);
     }
@@ -443,13 +453,14 @@ export function checkEdgeToEdge(ctx: CheckContext): CheckResult {
     });
   }
   const files = optOuts.map((o) => o.file);
-  if (t >= 36) {
-    return result("edge-to-edge", "fail", `windowOptOutEdgeToEdgeEnforcement is ignored on Android 16 when you target 36${assumedNote(ctx)}. Handle insets instead`, files);
+  const ignoredFrom = play(ctx)["edge-to-edge"].optOutIgnoredFromTargetSdk;
+  if (t >= ignoredFrom) {
+    return result("edge-to-edge", "fail", `windowOptOutEdgeToEdgeEnforcement is ignored on Android 16 when you target ${ignoredFrom}${assumedNote(ctx)}. Handle insets instead`, files);
   }
   return result(
     "edge-to-edge",
     "warn",
-    `windowOptOutEdgeToEdgeEnforcement stops working when you target 36, which Play requires for updates`,
+    `windowOptOutEdgeToEdgeEnforcement stops working when you target ${ignoredFrom}, which Play requires for updates`,
     files,
   );
 }
@@ -518,15 +529,16 @@ export function checkLargeScreens(ctx: CheckContext): CheckResult {
   const n = items.length - (appNotResizable ? 1 : 0);
   const lockText = n > 0 ? `${n} ${n === 1 ? "activity locks" : "activities lock"} orientation or size` : "the app locks resizing";
   const out = [...items];
-  if (optOut) out.push(`${RESIZABILITY_OPT_OUT} is set. It's temporary and stops working at API 37.`);
+  const large = play(ctx)["large-screens"];
+  if (optOut) out.push(`${RESIZABILITY_OPT_OUT} is set. It's temporary and stops working at API ${large.optOutEndsAtTargetSdk}.`);
   out.push(LARGE_SCREEN_HINT);
   if (!items.length) {
-    return result("large-screens", "warn", "uses the temporary resizability opt-out, which is gone at API 37", out, null, { locations });
+    return result("large-screens", "warn", `uses the temporary resizability opt-out, which is gone at API ${large.optOutEndsAtTargetSdk}`, out, null, { locations });
   }
   const detail =
-    t >= 36
-      ? `${lockText}. Android 16 ignores this on screens 600dp and wider when you target 36${assumedNote(ctx)}`
-      : `${lockText}. It will be ignored on screens 600dp and wider once you target 36`;
+    t >= large.locksIgnoredFromTargetSdk
+      ? `${lockText}. Android 16 ignores this on screens 600dp and wider when you target ${large.locksIgnoredFromTargetSdk}${assumedNote(ctx)}`
+      : `${lockText}. It will be ignored on screens 600dp and wider once you target ${large.locksIgnoredFromTargetSdk}`;
   return result("large-screens", "warn", detail, out, null, { locations });
 }
 
@@ -605,15 +617,16 @@ export function checkPredictiveBack(ctx: CheckContext): CheckResult {
     }
     return result("predictive-back", "pass", "no onBackPressed() overrides or KEYCODE_BACK handling found", notes);
   }
-  if (t >= 36) {
+  const backFrom = play(ctx)["predictive-back"].defaultOnFromTargetSdk;
+  if (t >= backFrom) {
     return result(
       "predictive-back",
       "warn",
-      `${hits.length} ${hits.length === 1 ? "file uses" : "files use"} the old back APIs. On Android 16 with target 36 they aren't called${assumedNote(ctx)}`,
+      `${hits.length} ${hits.length === 1 ? "file uses" : "files use"} the old back APIs. On Android 16 with target ${backFrom} they aren't called${assumedNote(ctx)}`,
       [...cap(hits), "Move to OnBackPressedCallback (androidx.activity) or OnBackInvokedCallback.", ...notes],
     );
   }
-  return result("predictive-back", "warn", `${hits.length} ${hits.length === 1 ? "file uses" : "files use"} the old back APIs, which stop being called once you target 36`, [...cap(hits), ...notes]);
+  return result("predictive-back", "warn", `${hits.length} ${hits.length === 1 ? "file uses" : "files use"} the old back APIs, which stop being called once you target ${backFrom}`, [...cap(hits), ...notes]);
 }
 
 // H. Photo and video permissions
@@ -684,12 +697,13 @@ export function checkRestrictedPermissions(ctx: CheckContext): CheckResult {
   if (calls.length) add(calls.join(", "), "Call Log permissions are only for the default phone handler (or an approved exception)");
   if (hasPermission(m, "ACCESS_BACKGROUND_LOCATION")) add("ACCESS_BACKGROUND_LOCATION", "needs a Play Console declaration and review");
   if (hasPermission(m, "USE_FULL_SCREEN_INTENT") && t >= 34) add("USE_FULL_SCREEN_INTENT", "only auto-granted for alarm and calling apps; others need a declaration");
-  if (t >= 37) {
+  const restricted = play(ctx)["restricted-permissions"];
+  if (t >= restricted.atTargetSdk) {
     if (hasPermission(m, "ACCESS_FINE_LOCATION")) {
-      add("ACCESS_FINE_LOCATION", `at target 37+ needs a declaration from ${fmtDate(DATES.permissionsApi37)}. Use the location button for one-off location`, DATES.permissionsApi37);
+      add("ACCESS_FINE_LOCATION", `at target ${restricted.atTargetSdk}+ needs a declaration from ${fmtDate(restricted.fineLocationAndContactsFrom)}. Use the location button for one-off location`, restricted.fineLocationAndContactsFrom);
     }
-    if (hasPermission(m, "READ_CONTACTS")) add("READ_CONTACTS", `at target 37+ needs a declaration from ${fmtDate(DATES.permissionsApi37)}, or use the Contact Picker`, DATES.permissionsApi37);
-    if (hasPermission(m, "ACCESS_LOCAL_NETWORK")) add("ACCESS_LOCAL_NETWORK", `at target 37+ needs a declaration from ${fmtDate(DATES.localNetworkApi37)}`, DATES.localNetworkApi37);
+    if (hasPermission(m, "READ_CONTACTS")) add("READ_CONTACTS", `at target ${restricted.atTargetSdk}+ needs a declaration from ${fmtDate(restricted.fineLocationAndContactsFrom)}, or use the Contact Picker`, restricted.fineLocationAndContactsFrom);
+    if (hasPermission(m, "ACCESS_LOCAL_NETWORK")) add("ACCESS_LOCAL_NETWORK", `at target ${restricted.atTargetSdk}+ needs a declaration from ${fmtDate(restricted.localNetworkFrom)}`, restricted.localNetworkFrom);
   }
   if (!names.length) return result("restricted-permissions", "pass", "no restricted permissions that need a declaration");
   deadlines.sort();

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0
+
+- In online mode, Play requirement dates, target API levels and billing cutoffs are loaded from `https://devbooth.dev/api/play-rules`. The request is a GET, sends nothing about your project, and has a short timeout. `--no-submit` does not affect it.
+- If you pass `--offline`, the site can't be reached, or the data uses an unknown schema version, the snapshot bundled at publish time is used instead. `npm run refresh-play-rules` updates that snapshot from the live endpoint.
+- `--verbose` prints which data was used and the date it was last updated, for example "Play rules: live from devbooth.dev, updated Nov 16, 2026". The same details are in the JSON output as `playRules`.
+
 ## 1.0.0
 
 First release as play-preflight (formerly 16kb-check).

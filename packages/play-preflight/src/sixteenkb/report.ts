@@ -32,6 +32,9 @@ export type ReportExtras = {
   buildToolingIgnored?: number;
   agp?: AgpCheck;
   checkedAt?: string;
+  deadline?: string;
+  playRulesLine?: string;
+  playRulesJson?: { source: string; updatedAt: string; fallbackReason?: string };
 };
 
 export type CliJson = {
@@ -63,6 +66,7 @@ export type CliJson = {
   notes: string[];
   issues: { file: string; message: string }[];
   files: { name: string; kind: string; depCount: number }[];
+  playRules?: { source: string; updatedAt: string; fallbackReason?: string };
 };
 
 const ANSI = {
@@ -182,8 +186,9 @@ export function toJson(report: CheckReport, skippedPrivate: number, extras: Repo
     },
     settling: counts.checking > 0,
     verdict: report.verdictLine,
-    deadline: DEADLINE_NOTE,
+    deadline: extras.deadline ?? DEADLINE_NOTE,
     deadlineSource: DEADLINE_SOURCE,
+    ...(extras.playRulesJson ? { playRules: extras.playRulesJson } : {}),
     scope: SCOPE_NOTE,
     rows,
     buildPlugins: {
@@ -329,7 +334,8 @@ export function formatTable(
     lines.push("");
     lines.push(SCOPE_NOTE);
   }
-  lines.push(DEADLINE_NOTE);
+  lines.push(extras.deadline ?? DEADLINE_NOTE);
+  if (verbose && extras.playRulesLine) lines.push(extras.playRulesLine);
   return lines.join("\n") + "\n";
 }
 

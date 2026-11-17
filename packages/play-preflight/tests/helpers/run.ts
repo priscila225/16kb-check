@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { runCheck, type CheckIo } from "../../src/preflight/run.ts";
 import type { CatalogEntry } from "../../src/sixteenkb/check/types.ts";
+import { bundledPlayRules } from "../../src/preflight/play-rules.ts";
 
 export const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 export const fixture = (name: string) => join(FIXTURES, name);
@@ -53,8 +54,15 @@ export type JsonOut = {
   summary: Record<string, number>;
   notes: string[];
   privacy: { offline: boolean; noSubmit?: boolean; lookedUp: boolean; skippedPrivate: number; submitted?: number; pendingUnknown?: number };
+  playRules?: { source: "live" | "bundled"; updatedAt: string; fallbackReason?: string };
   exitCode: number;
 };
+
+function ioFor(args: string[], extra: Partial<CheckIo>): Partial<CheckIo> {
+  // Keep ordinary tests off the network. Tests that want a live fetch pass `api`.
+  if (extra.playRules !== undefined || extra.api || args.includes("--offline")) return extra;
+  return { playRules: bundledPlayRules(), ...extra };
+}
 
 export async function runJson(args: string[], extra: Partial<CheckIo> = {}): Promise<{ exitCode: number; json: JsonOut; err: string }> {
   let out = "";
@@ -62,7 +70,7 @@ export async function runJson(args: string[], extra: Partial<CheckIo> = {}): Pro
   const res = await runCheck([...args, "--json"], {
     stdout: { write: (s: string) => void (out += s) },
     stderr: { write: (s: string) => void (err += s) },
-    ...extra,
+    ...ioFor(args, extra),
   });
   if (!out) throw new Error(`no output; stderr: ${err}`);
   return { exitCode: res.exitCode, json: JSON.parse(out) as JsonOut, err };
@@ -74,7 +82,7 @@ export async function runText(args: string[], extra: Partial<CheckIo> = {}): Pro
   const res = await runCheck(args, {
     stdout: { write: (s: string) => void (out += s) },
     stderr: { write: (s: string) => void (err += s) },
-    ...extra,
+    ...ioFor(args, extra),
   });
   return { exitCode: res.exitCode, out, err };
 }

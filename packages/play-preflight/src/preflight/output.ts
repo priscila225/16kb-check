@@ -1,5 +1,6 @@
 import type { CheckResult, CheckStatus } from "./checks";
 import { privacyLine, type Privacy } from "../sixteenkb/closing";
+import { playRulesJson, playRulesLine, type ResolvedPlayRules } from "./play-rules";
 
 export { privacyLine, type Privacy };
 
@@ -126,6 +127,7 @@ export function formatCheckText(input: {
   counts: Record<CheckStatus, number>;
   notes: string[];
   privacy: Privacy;
+  playRules?: ResolvedPlayRules;
   color: boolean;
   verbose?: boolean;
   /** When true, the source-manifest caveat is printed once under the header. */
@@ -140,6 +142,7 @@ export function formatCheckText(input: {
   if (verbose) {
     const from = sdkFromLine(header);
     if (from) lines.push(from);
+    if (input.playRules) lines.push(playRulesLine(input.playRules));
   }
   if (input.sourceManifest) lines.push(SOURCE_MANIFEST_NOTE);
   const leftoverNotes = notes.filter((n) => n !== SOURCE_MANIFEST_NOTE);
@@ -198,6 +201,7 @@ export function formatCheckGithub(input: {
   counts: Record<CheckStatus, number>;
   notes: string[];
   privacy: Privacy;
+  playRules?: ResolvedPlayRules;
   verbose?: boolean;
   sourceManifest?: boolean;
 }): string {
@@ -226,6 +230,7 @@ export function toCheckJson(input: {
   counts: Record<CheckStatus, number>;
   notes: string[];
   privacy: Privacy;
+  playRules?: ResolvedPlayRules;
   exitCode: number;
   now: Date;
 }) {
@@ -234,6 +239,7 @@ export function toCheckJson(input: {
     version: input.version,
     checkedAt: input.now.toISOString(),
     input: input.header,
+    ...(input.playRules ? { playRules: playRulesJson(input.playRules) } : {}),
     checks: input.results.map((r) => ({
       id: r.id,
       status: r.status,

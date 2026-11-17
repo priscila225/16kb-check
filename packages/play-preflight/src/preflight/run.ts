@@ -5,12 +5,13 @@ import { findProjectRoot } from "../sixteenkb/discover";
 import { VERSION } from "../version";
 import { envNoSubmit, resolveAgainstCatalog } from "../sixteenkb/cli";
 import { createClient, type ApiClient } from "../sixteenkb/api";
+import { loadPlayRules, type ResolvedPlayRules } from "./play-rules";
 import { checkAgp, type AgpCheck } from "../sixteenkb/check/agp";
 import type { CatalogEntry } from "../sixteenkb/check/types";
 import { scanProject, type ProjectScan } from "./project";
 import { scanBinary, type BinaryScan } from "./binary";
 import { CHECKS, detectFormFactor, type CheckContext, type CheckResult, type CheckStatus, type SdkLookup } from "./checks";
-import { CHECK_IDS, PLAY_MIN_TARGET, type CheckId } from "./rules";
+import { CHECK_IDS, type CheckId } from "./rules";
 import { formatCheckGithub, formatCheckText, SOURCE_MANIFEST_NOTE, toCheckJson, type OutputFormat } from "./output";
 
 export const CHECK_HELP = `play-preflight check — check an Android app against Google Play's current rules.
@@ -32,7 +33,7 @@ Output:
   --strict              Exit 1 on WARN too (default: only FAIL)
   --only <ids>          Run only these checks (comma separated)
   --skip <ids>          Skip these checks (comma separated)
-  --offline             No network at all. Skips the public SDK lookup
+  --offline             No network at all. Uses bundled Play dates and skips the SDK lookup
   --no-submit           Download the public SDK list, but never send unknown SDK names
   --no-auto-check       Same as --no-submit
   --no-color            Disable color (also when stdout is not a TTY, or NO_COLOR is set)
@@ -47,12 +48,16 @@ Check ids:
   ${CHECK_IDS.join(", ")}
 
 Privacy:
-  Everything runs on this machine. The only network call is the public SDK
-  lookup on devbooth.dev, which sends public Maven group:artifact names after
-  private and internal ones (including com.github.* and JitPack) are dropped
-  here. Your targetSdk, permissions, package name and files are never sent.
-  --no-submit (or PLAY_PREFLIGHT_NO_SUBMIT=1) still downloads the list, but
-  never sends unknown SDK names. --offline skips the network completely.
+  Everything runs on this machine. The network calls are GETs on devbooth.dev
+  for the current Play requirement dates (/api/play-rules) and, when the 16 KB
+  check runs, the public SDK list (/api/catalog). Those requests send nothing
+  about your project. Unknown public SDK names are only sent if you don't pass
+  --no-submit, and only after private and internal ones (including com.github.*
+  and JitPack) are dropped here. Your targetSdk, permissions, package name and
+  files are never sent. --no-submit (or PLAY_PREFLIGHT_NO_SUBMIT=1) still
+  downloads the dates and the list, but never sends unknown SDK names.
+  --offline skips the network completely and uses the dates bundled in this
+  release.
 
   https://devbooth.dev/cli
 `;
@@ -142,6 +147,8 @@ export type CheckIo = {
   api?: ApiClient;
   /** Tests: use this catalog instead of downloading one. */
   catalog?: CatalogEntry[];
+  /** Tests: use these Play rules instead of downloading them. */
+  playRules?: ResolvedPlayRules;
   enqueue?: boolean;
   now?: Date;
   env?: NodeJS.ProcessEnv;
@@ -226,8 +233,9 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
   const manifestKind: CheckContext["manifestKind"] = binary?.manifest ? "apk" : project?.manifest ? project.manifestKind : "none";
 
   // targetSdk: --target-sdk > APK > project (merged manifest or Gradle)
+  const playRules = io.playRules ?? await loadPlayRules({ offline: opts.offline, client: io.api ?? createClient() });
   const formFactor = detectFormFactor(manifest);
-  const required = PLAY_MIN_TARGET[formFactor];
+  const required = playRules.rules.checks["target-api"].minTargetSdk[formFactor];
   let target: { value?: number; from?: string; expr?: string };
   if (opts.targetSdk !== undefined) target = { value: opts.targetSdk, from: "--target-sdk" };
   else if (binary?.manifest?.targetSdk !== undefined) target = { value: binary.manifest.targetSdk, from: binary.file };
@@ -291,6 +299,7 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
     binary,
     sdk,
     agp,
+    playRules,
   };
 
   const results = selected.map((id) => CHECKS[id](ctx));
@@ -323,7 +332,7 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
 
   if (opts.json) {
     const jsonNotes = sourceManifest ? [SOURCE_MANIFEST_NOTE, ...notes] : notes;
-    const body = toCheckJson({ version: VERSION, header, results, counts, notes: jsonNotes, privacy, exitCode, now: io.now ?? new Date() });
+    const body = toCheckJson({ version: VERSION, header, results, counts, notes: jsonNotes, privacy, playRules, exitCode, now: io.now ?? new Date() });
     io.stdout.write(JSON.stringify(body, null, 2) + "\n");
   } else {
     const env = io.env ?? process.env;
@@ -335,6 +344,7 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
       counts,
       notes,
       privacy,
+      playRules,
       verbose: opts.verbose,
       sourceManifest,
       repeatSummary: opts.format === "github" || !io.stdout.isTTY,

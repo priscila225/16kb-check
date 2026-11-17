@@ -1,3 +1,4 @@
+import { BUNDLED_PLAY_RULES, fmtDate } from "../../preflight/play-rules";
 import type { CatalogEntry, CheckReport, DeclaredDep, ParseResult, ReportRow, ReportVerdict } from "./types";
 import { likelyFineReason } from "./known-jvm";
 import { isCandidatePublicCoordinate } from "./public-coords";
@@ -222,18 +223,18 @@ export function buildReport(parsed: ParseResult, entries: CatalogEntry[]): Check
   return { rows, counts, blocking, verdictLine, notes, files: parsed.files, issues: parsed.issues, unmatchedCoordinates };
 }
 
-export function verdictText(blocking: number, counts: CheckReport["counts"], total: number): string {
+export function verdictText(blocking: number, counts: CheckReport["counts"], total: number, deadlineLabel: string = fmtDate(BUNDLED_PLAY_RULES.checks["16kb"].blockFrom)): string {
   if (total === 0) return "No library coordinates were found in the files you provided.";
   if (blocking === 0) {
     const unknown = counts.unknown;
-    if (counts.checking) return `No known blockers for the Feb 1, 2027 deadline among the libraries we could already match. We are automatically checking ${counts.checking} more.`;
-    if (unknown) return `No known blockers for the Feb 1, 2027 deadline among the libraries we could match. ${unknown} ${unknown === 1 ? "library is" : "libraries are"} not in the database yet.`;
-    return "No known blockers for the Feb 1, 2027 deadline in the libraries we could check.";
+    if (counts.checking) return `No known blockers for the ${deadlineLabel} deadline among the libraries we could already match. We are automatically checking ${counts.checking} more.`;
+    if (unknown) return `No known blockers for the ${deadlineLabel} deadline among the libraries we could match. ${unknown} ${unknown === 1 ? "library is" : "libraries are"} not in the database yet.`;
+    return `No known blockers for the ${deadlineLabel} deadline in the libraries we could check.`;
   }
   const n = blocking;
   const noun = n === 1 ? "library" : "libraries";
   const verb = n === 1 ? "may block" : "may block";
-  return `${n} ${noun} ${verb} your Feb 1, 2027 release.`;
+  return `${n} ${noun} ${verb} your ${deadlineLabel} release.`;
 }
 
 

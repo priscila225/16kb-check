@@ -32,7 +32,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "play-preflight": "^1.0.0"
+    "play-preflight": "^1.1.0"
   },
   "scripts": {
     "test": "node --test test/*.test.js"

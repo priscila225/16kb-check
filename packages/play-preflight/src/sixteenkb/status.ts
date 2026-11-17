@@ -20,12 +20,17 @@ export function toCliStatus(verdict: ReportVerdict): CliStatus {
   }
 }
 
+import { BUNDLED_PLAY_RULES, fmtDate } from "../preflight/play-rules";
+
 /**
  * Matches the Google Play compatibility requirement on
- * https://developer.android.com/guide/practices/page-sizes (checked Nov 11, 2026).
+ * https://developer.android.com/guide/practices/page-sizes (checked Nov 16, 2026).
  */
-export const DEADLINE_NOTE =
-  "Google Play: apps targeting Android 15 (API 35) or higher must support 16 KB page sizes on 64-bit devices. Starting Feb 1, 2027, updates that don't support 16 KB can't be released.";
+export function deadlineNote(blockFrom: string = BUNDLED_PLAY_RULES.checks["16kb"].blockFrom): string {
+  return `Google Play: apps targeting Android 15 (API 35) or higher must support 16 KB page sizes on 64-bit devices. Starting ${fmtDate(blockFrom)}, updates that don't support 16 KB can't be released.`;
+}
+
+export const DEADLINE_NOTE = deadlineNote();
 
 export const DEADLINE_SOURCE = "https://developer.android.com/guide/practices/page-sizes";
 

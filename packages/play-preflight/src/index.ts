@@ -4,6 +4,7 @@ export { run as run16kb, HELP as HELP_16KB, resolveAgainstCatalog } from "./sixt
 export { runCheck, parseCheckArgv, exitCodeFor, CHECK_HELP } from "./preflight/run";
 export { CHECKS, type CheckResult, type CheckStatus, type CheckContext } from "./preflight/checks";
 export { CHECK_IDS, RULES, DATES, PLAY_MIN_TARGET, type CheckId } from "./preflight/rules";
+export { loadPlayRules, parsePlayRules, bundledPlayRules, BUNDLED_PLAY_RULES, type ResolvedPlayRules } from "./preflight/play-rules";
 export { scanProject } from "./preflight/project";
 export { scanBinary } from "./preflight/binary";
 export { parseBinaryXml } from "./preflight/axml";

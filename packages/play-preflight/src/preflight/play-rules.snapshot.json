@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-11-16",
+  "checks": {
+    "target-api": {
+      "minTargetSdk": {
+        "phone": 36,
+        "wear": 35,
+        "automotive": 35,
+        "tv": 34
+      },
+      "since": "2026-08-31",
+      "extensionEnded": "2026-11-01",
+      "existingAppsHiddenBelow": 35
+    },
+    "16kb": {
+      "blockFrom": "2027-02-01"
+    },
+    "play-billing": {
+      "currentMajorRequired": 8,
+      "nextMajor": 9,
+      "v7Cutoff": "2026-08-31",
+      "v7Extension": "2026-11-01",
+      "v8SupportedUntil": "2027-08-31",
+      "v8Extension": "2027-11-01",
+      "v9SupportedUntil": "2028-08-31"
+    },
+    "foreground-services": {
+      "requiredFromTargetSdk": 34,
+      "timeLimitFromTargetSdk": 35
+    },
+    "edge-to-edge": {
+      "optOutIgnoredFromTargetSdk": 36
+    },
+    "large-screens": {
+      "locksIgnoredFromTargetSdk": 36,
+      "optOutEndsAtTargetSdk": 37
+    },
+    "predictive-back": {
+      "defaultOnFromTargetSdk": 36
+    },
+    "photo-video": {
+      "fromTargetSdk": 33
+    },
+    "exact-alarms": {
+      "fromTargetSdk": 33
+    },
+    "restricted-permissions": {
+      "atTargetSdk": 37,
+      "fineLocationAndContactsFrom": "2027-01-27",
+      "localNetworkFrom": "2027-08-25"
+    },
+    "account-deletion": {
+      "inForceSince": "2024-05-31"
+    }
+  }
+}

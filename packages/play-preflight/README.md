@@ -107,7 +107,7 @@ npx play-preflight 16kb
 | `--verbose`, `-v` | Show ready SDK rows, side notes, every locked activity, `from` details in the header, and Rule / devbooth links on all checks |
 | `--strict` | Exit 1 on WARN too |
 | `--only <ids>` / `--skip <ids>` | Comma-separated check ids |
-| `--offline` | Skip the SDK lookup. Every other check is already local |
+| `--offline` | No network. Uses the Play dates bundled in this release and skips the SDK lookup |
 | `--no-submit`, `--no-auto-check` | Download the public SDK list, but never send unknown SDK names. Same as `PLAY_PREFLIGHT_NO_SUBMIT=1` |
 | `--no-color` | Plain output. Color is also off when stdout is not a TTY, or when `NO_COLOR` is set |
 
@@ -122,6 +122,8 @@ Requires Node 18 or newer.
 - **Native libraries**: `lib/arm64-v8a` and `lib/x86_64` inside the APK, or `<module>/lib/...` inside the AAB. Each `.so` is parsed as ELF on your machine.
 
 Reading the AAB manifest (protobuf) is planned for a later version.
+
+Online, the dates and API levels used by the checks come from `https://devbooth.dev/api/play-rules`, so a site update reaches you without a new npm release. If the site can't be reached, the schema isn't recognized, or you pass `--offline`, the snapshot bundled at publish time is used instead. `--verbose` prints which one was used and when it was last updated.
 
 ## CI example
 
@@ -148,15 +150,16 @@ jobs:
 
 Everything runs on your machine. Your Gradle files, manifests, resources, sources and binaries are never uploaded.
 
-The only network call is the public SDK lookup used by the `16kb` check:
+The network calls are GETs on devbooth.dev. Neither request sends anything about your project:
 
-- It downloads the public catalog from `https://devbooth.dev/api/catalog`. That request sends nothing about your project.
+- It downloads the current Play requirement dates from `https://devbooth.dev/api/play-rules` (deadlines, target API levels, billing cutoffs). `--verbose` says whether the live copy or the snapshot bundled in this release was used, and the date it was last updated.
+- The `16kb` check also downloads the public catalog from `https://devbooth.dev/api/catalog`.
 - Private and internal libraries are dropped on your machine first, including `com.github.*`, JitPack, `project(...)` modules and anything that isn't a known public Maven group. They're never printed or sent, only counted.
 - If a public SDK isn't in the catalog yet, its public `group:artifact` name (and public version string) is sent so the site can check it.
 - Your targetSdk, permissions, package name, module names and file contents are never sent.
-- `--no-submit` (or `--no-auto-check`, or `PLAY_PREFLIGHT_NO_SUBMIT=1`) still downloads the catalog, but never sends unknown SDK names. The run ends with "Downloaded the public SDK list. Sent no SDK names."
+- `--no-submit` (or `--no-auto-check`, or `PLAY_PREFLIGHT_NO_SUBMIT=1`) still downloads the dates and the catalog, but never sends unknown SDK names. The run ends with "Downloaded the public SDK list. Sent no SDK names."
 - In default online mode the same closing line says what actually happened: "Downloaded the public SDK list. No unknown SDKs, so nothing was sent." or "Downloaded the public SDK list. Sent K unknown public SDK names to be checked." If any private or internal libraries were skipped, that count is appended. `play-preflight 16kb` prints the same closing line.
-- `--offline` skips the lookup completely.
+- `--offline` skips the network completely and uses the dates bundled in this release.
 
 ## The `16kb` command
 

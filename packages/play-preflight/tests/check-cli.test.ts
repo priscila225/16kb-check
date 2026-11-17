@@ -14,6 +14,7 @@ import { NO_SUBMIT_LINE } from "../src/sixteenkb/cli.ts";
 import { privacyLine } from "../src/sixteenkb/closing.ts";
 import type { CatalogEntry } from "../src/sixteenkb/check/types.ts";
 import { CATALOG, byId, fixture, runJson, runText } from "./helpers/run.ts";
+import { BUNDLED_PLAY_RULES } from "../src/preflight/play-rules.ts";
 
 type Call = { url: string; method: string; body: string };
 
@@ -22,6 +23,9 @@ function spyClient(calls: Call[], entries = CATALOG) {
     baseUrl: "https://devbooth.test",
     fetch: (async (url: string | URL, init?: RequestInit) => {
       calls.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+      if (String(url).includes("/api/play-rules")) {
+        return new Response(JSON.stringify(BUNDLED_PLAY_RULES), { status: 200 });
+      }
       if (String(url).includes("/api/catalog")) {
         return new Response(JSON.stringify({ ok: true, count: entries.length, entries }), { status: 200 });
       }
@@ -152,9 +156,10 @@ async function assertNoSubmit(args: string[], extra: Parameters<typeof runJson>[
     ...extra,
   });
   assert.equal(exitCode, 1);
-  assert.equal(calls.length, 1, JSON.stringify(calls));
-  assert.equal(calls[0].method, "GET");
-  assert.ok(calls[0].url.startsWith("https://devbooth.test/api/catalog"), calls[0].url);
+  assert.equal(calls.length, 2, JSON.stringify(calls));
+  assert.ok(calls.every((c) => c.method === "GET"), JSON.stringify(calls));
+  assert.ok(calls.some((c) => c.url.includes("/api/catalog")), JSON.stringify(calls));
+  assert.ok(calls.some((c) => c.url.includes("/api/play-rules")), JSON.stringify(calls));
   assert.ok(!calls.some((c) => c.method === "POST" || c.url.includes("check-demand")));
   assert.equal(json.privacy.noSubmit, true);
   assert.equal(json.privacy.offline, false);
@@ -185,7 +190,7 @@ test("privacy: only public SDK names leave the machine; never targetSdk, permiss
   assert.equal(exitCode, 1);
   assert.ok(calls.length >= 1);
   for (const c of calls) {
-    assert.ok(c.url.startsWith("https://devbooth.test/api/catalog") || c.url === "https://devbooth.test/api/check-demand", c.url);
+    assert.ok(c.url.startsWith("https://devbooth.test/api/catalog") || c.url === "https://devbooth.test/api/play-rules" || c.url === "https://devbooth.test/api/check-demand", c.url);
     const blob = c.url + c.body;
     for (const secret of [
       "acme-internal",
@@ -209,10 +214,12 @@ test("privacy: only public SDK names leave the machine; never targetSdk, permiss
   assert.equal(json.privacy.lookedUp, true);
 });
 
-test("the SDK lookup is skipped when the 16kb check is not selected", async () => {
+test("the SDK lookup is skipped when the 16kb check is not selected, but Play dates are still downloaded", async () => {
   const calls: Call[] = [];
   await runJson([fixture("legacy-app"), "--only", "target-api"], { api: spyClient(calls) });
-  assert.equal(calls.length, 0);
+  assert.equal(calls.length, 1, JSON.stringify(calls));
+  assert.equal(calls[0].method, "GET");
+  assert.ok(calls[0].url.includes("/api/play-rules"), calls[0].url);
 });
 
 test("a failed catalog download doesn't stop the other checks", async () => {

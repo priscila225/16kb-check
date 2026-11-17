@@ -1,3 +1,5 @@
+import { BUNDLED_PLAY_RULES, fmtDate } from "./play-rules";
+
 /**
  * Every rule a check enforces, with the official Google page it comes from and the devbooth.dev page
  * that explains it. Only dates read on the official pages are used (checked Nov 16, 2026).
@@ -81,27 +83,25 @@ export const RULES: Record<CheckId, RuleMeta> = {
   },
 };
 
-/** Verified dates (ISO). */
+const bundled = BUNDLED_PLAY_RULES.checks;
+
+/** Verified dates (ISO). Defaults from the snapshot bundled at publish time. */
 export const DATES = {
-  targetApi36: "2026-08-31",
-  targetApi36Extension: "2026-11-01",
-  sixteenKbBlock: "2027-02-01",
-  billing7Cutoff: "2026-08-31",
-  billing7Extension: "2026-11-01",
-  billing8Cutoff: "2027-08-31",
-  billing8Extension: "2027-11-01",
-  billing9Cutoff: "2028-08-31",
-  permissionsApi37: "2027-01-27",
-  localNetworkApi37: "2027-08-25",
+  targetApi36: bundled["target-api"].since,
+  targetApi36Extension: bundled["target-api"].extensionEnded,
+  sixteenKbBlock: bundled["16kb"].blockFrom,
+  billing7Cutoff: bundled["play-billing"].v7Cutoff,
+  billing7Extension: bundled["play-billing"].v7Extension,
+  billing8Cutoff: bundled["play-billing"].v8SupportedUntil,
+  billing8Extension: bundled["play-billing"].v8Extension,
+  billing9Cutoff: bundled["play-billing"].v9SupportedUntil,
+  permissionsApi37: bundled["restricted-permissions"].fineLocationAndContactsFrom,
+  localNetworkApi37: bundled["restricted-permissions"].localNetworkFrom,
 } as const;
 
-/** Play's minimum targetSdk for new apps and updates, by form factor (since Aug 31, 2026). */
-export const PLAY_MIN_TARGET = { phone: 36, wear: 35, automotive: 35, tv: 34 } as const;
+/** Play's minimum targetSdk for new apps and updates, by form factor. */
+export const PLAY_MIN_TARGET = bundled["target-api"].minTargetSdk;
 export type FormFactor = keyof typeof PLAY_MIN_TARGET;
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+export { fmtDate };
 
-export function fmtDate(iso: string): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  return `${MONTHS[m - 1]} ${d}, ${y}`;
-}

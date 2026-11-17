@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createClient } from "../../src/sixteenkb/api.ts";
+import { BUNDLED_PLAY_RULES } from "../../src/preflight/play-rules.ts";
 import { HELP, NO_SUBMIT_LINE, parseArgv, run } from "../../src/sixteenkb/cli.ts";
 import { privacyLine } from "../../src/sixteenkb/closing.ts";
 import { VERSION } from "../../src/sixteenkb/version.ts";
@@ -216,6 +217,9 @@ function spyClient(calls: Call[], entries: CatalogEntry[] = []) {
     baseUrl: "https://devbooth.test",
     fetch: (async (url: string | URL, init?: RequestInit) => {
       calls.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+      if (String(url).includes("/api/play-rules")) {
+        return new Response(JSON.stringify(BUNDLED_PLAY_RULES), { status: 200 });
+      }
       if (String(url).includes("/api/catalog")) {
         return new Response(JSON.stringify({ ok: true, count: entries.length, entries }), { status: 200 });
       }
@@ -250,21 +254,22 @@ test("16kb without --no-submit POSTs unknown public SDKs to check-demand", async
 test("16kb --no-submit downloads the catalog and never POSTs, even with unknown public SDKs", async () => {
   const { result, out, calls } = await runWithSpy(["--path", fixture, "--no-color", "--no-submit"]);
   assert.equal(result.exitCode, 0);
-  assert.equal(calls.length, 1, JSON.stringify(calls));
-  assert.equal(calls[0].method, "GET");
-  assert.ok(calls[0].url.startsWith("https://devbooth.test/api/catalog"), calls[0].url);
+  assert.equal(calls.length, 2, JSON.stringify(calls));
+  assert.ok(calls.every((c) => c.method === "GET"), JSON.stringify(calls));
+  assert.ok(calls.some((c) => c.url.includes("/api/catalog")), JSON.stringify(calls));
+  assert.ok(calls.some((c) => c.url.includes("/api/play-rules")), JSON.stringify(calls));
   assert.ok(!calls.some((c) => c.method === "POST" || c.url.includes("check-demand")));
   assert.ok(out.trimEnd().endsWith(NO_SUBMIT_LINE), out);
 });
 
 test("16kb --no-auto-check and PLAY_PREFLIGHT_NO_SUBMIT=1 also skip the POST", async () => {
   const alias = await runWithSpy(["--path", fixture, "--json", "--no-auto-check"]);
-  assert.equal(alias.calls.length, 1);
-  assert.equal(alias.calls[0].method, "GET");
+  assert.equal(alias.calls.length, 2, JSON.stringify(alias.calls));
+  assert.ok(alias.calls.every((c) => c.method === "GET"));
   assert.ok(!alias.calls.some((c) => c.method === "POST"));
   const env = await runWithSpy(["--path", fixture, "--no-color"], { env: { PLAY_PREFLIGHT_NO_SUBMIT: "1" } });
-  assert.equal(env.calls.length, 1);
-  assert.equal(env.calls[0].method, "GET");
+  assert.equal(env.calls.length, 2, JSON.stringify(env.calls));
+  assert.ok(env.calls.every((c) => c.method === "GET"));
   assert.ok(!env.calls.some((c) => c.method === "POST"));
   assert.ok(env.out.trimEnd().endsWith(NO_SUBMIT_LINE), env.out);
 });

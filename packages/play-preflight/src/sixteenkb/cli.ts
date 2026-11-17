@@ -9,6 +9,9 @@ import type { CatalogEntry, CheckReport, DeclaredDep, ParseResult } from "./chec
 import { splitPublicDeps } from "./privacy";
 import { privacyLine } from "./closing";
 import { createClient, enqueuePublicUnknown, fetchCatalog, type ApiClient } from "./api";
+import { bundledPlayRules, fmtDate, loadPlayRules, playRulesJson, playRulesLine, type ResolvedPlayRules } from "../preflight/play-rules";
+import { deadlineNote } from "./status";
+import { verdictText } from "./check/match";
 import { annotateGradlePlugins, ciShouldFail, formatTable, toJson, useColor, type ColorMode, type ReportExtras } from "./report";
 import { checkAgp, isAgpPlugin } from "./check/agp";
 import { catalogGroupsFrom, isCandidatePublicCoordinate, isPrivateOrInternalGroup, publicDemandCoordinates } from "./check/public-coords";
@@ -36,12 +39,14 @@ Exit codes:
   2  bad usage or a runtime error (no project, catalog download failed, unknown flag)
 
 Privacy:
-  Your Gradle and TOML files stay on this machine. Private and internal
-  libraries (including com.github.* and JitPack) are filtered out locally
-  and are never sent to devbooth.dev. Only public Maven coordinates are looked
-  up, and only public version strings are sent when a public SDK is not
-  in the database yet. --no-submit (or PLAY_PREFLIGHT_NO_SUBMIT=1) still
-  downloads the public list, but never sends unknown SDK names.
+  Your Gradle and TOML files stay on this machine. The network calls are
+  GETs on devbooth.dev for the current Play requirement dates and the public
+  SDK list. Those requests send nothing about your project. Private and
+  internal libraries (including com.github.* and JitPack) are filtered out
+  locally and are never sent. Only public Maven coordinates are looked up,
+  and only public version strings are sent when a public SDK is not in the
+  database yet. --no-submit (or PLAY_PREFLIGHT_NO_SUBMIT=1) still downloads
+  the dates and the list, but never sends unknown SDK names.
 
   https://devbooth.dev/16kb
 `;
@@ -103,6 +108,7 @@ export type RunIo = {
   stderr: { write: (s: string) => void; isTTY?: boolean };
   api?: ApiClient;
   catalog?: CatalogEntry[];
+  playRules?: ResolvedPlayRules;
   enqueue?: boolean;
   env?: NodeJS.ProcessEnv;
 };
@@ -154,6 +160,14 @@ export async function run(argv: string[], io: RunIo = { stdout: process.stdout, 
   const extras = buildExtras(parsed.plugins, parsed.testDependencies.length, parsed.buildToolingDependencies.length, catalogGroups);
 
   extras.checkedAt = new Date().toISOString();
+  const playRules =
+    io.playRules ??
+    (io.catalog ? bundledPlayRules() : await loadPlayRules({ offline: false, client }));
+  const blockFrom = playRules.rules.checks["16kb"].blockFrom;
+  extras.deadline = deadlineNote(blockFrom);
+  extras.playRulesLine = playRulesLine(playRules);
+  extras.playRulesJson = playRulesJson(playRules);
+  report.verdictLine = verdictText(report.blocking, report.counts, report.rows.length, fmtDate(blockFrom));
   const color = useColor(opts.color, io.stdout);
   if (opts.json) {
     io.stdout.write(JSON.stringify(toJson(report, skippedPrivate, extras), null, 2) + "\n");
