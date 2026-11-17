@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="ExampleMainScene" extends="Scene">
+    <script type="text/brightscript" uri="pkg:/components/ExampleMainScene.brs" />
+    <children>
+        <Label id="title" text="Example Channel" />
+    </children>
+</component>

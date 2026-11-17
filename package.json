@@ -3,10 +3,11 @@
   "private": true,
   "workspaces": [
     "packages/play-preflight",
-    "packages/16kb-check"
+    "packages/16kb-check",
+    "packages/roku-preflight"
   ],
   "scripts": {
-    "build": "npm run build -w play-preflight",
-    "test": "npm test -w play-preflight && npm test -w 16kb-check"
+    "build": "npm run build -w play-preflight && npm run build -w 16kb-check && npm run build -w roku-preflight",
+    "test": "npm test -w play-preflight && npm test -w 16kb-check && npm test -w roku-preflight"
   }
 }

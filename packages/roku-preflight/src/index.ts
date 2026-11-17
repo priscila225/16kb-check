@@ -1,0 +1,10 @@
+export { VERSION } from "./version";
+export { main, HELP } from "./cli";
+export { runCheck, parseCheckArgv, exitCodeFor, CHECK_HELP } from "./preflight/run";
+export { CHECKS, type CheckResult, type CheckStatus, type CheckContext } from "./preflight/checks";
+export { CHECK_IDS, RULES, DATES, type CheckId } from "./preflight/rules";
+export { loadRokuRules, parseRokuRules, bundledRokuRules, BUNDLED_ROKU_RULES, type ResolvedRokuRules } from "./preflight/roku-rules";
+export { scanInput } from "./preflight/project";
+export { parseManifest } from "./preflight/manifest";
+export { openZip, buildZip } from "./preflight/zip";
+export { readImage } from "./preflight/image";
