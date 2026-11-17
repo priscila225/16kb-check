@@ -222,8 +222,10 @@ test("header: minSdk and compileSdk come from buildSrc constants and the version
   const text = await runText([fixture("checks/sdk-catalog"), "--offline", "--only", "target-api"]);
   assert.match(text.out.split("\n")[0], /source only  ·  targetSdk 35  minSdk 23  compileSdk 36/);
   const verbose = await runText([fixture("checks/sdk-catalog"), "--offline", "--only", "target-api", "--verbose"]);
-  assert.match(verbose.out.split("\n")[0], /targetSdk 35, from /);
-  assert.match(verbose.out.split("\n")[0], /compileSdk 36, from /);
+  assert.match(verbose.out.split("\n")[0], /source only  ·  targetSdk 35  minSdk 23  compileSdk 36/);
+  assert.doesNotMatch(verbose.out.split("\n")[0], /from /);
+  assert.match(verbose.out, /^from /m);
+  assert.equal(verbose.out.split("\n").filter((l) => l.startsWith("from ")).length, 1);
   const plain = await runJson([fixture("checks/fgs-ok"), "--offline", "--only", "target-api"]);
   assert.equal(plain.json.input.minSdk, 24);
   assert.equal(plain.json.input.compileSdk, 36);

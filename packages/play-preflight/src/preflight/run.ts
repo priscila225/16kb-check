@@ -329,7 +329,16 @@ export async function runCheck(argv: string[], io: CheckIo = { stdout: process.s
     const env = io.env ?? process.env;
     const color =
       opts.color === "auto" ? !!io.stdout.isTTY && !env.NO_COLOR && env.FORCE_COLOR !== "0" : opts.color;
-    const payload = { header, results, counts, notes, privacy, verbose: opts.verbose, sourceManifest };
+    const payload = {
+      header,
+      results,
+      counts,
+      notes,
+      privacy,
+      verbose: opts.verbose,
+      sourceManifest,
+      repeatSummary: opts.format === "github" || !io.stdout.isTTY,
+    };
     if (opts.format === "github") io.stdout.write(formatCheckGithub(payload));
     else io.stdout.write(formatCheckText({ ...payload, color }));
   }

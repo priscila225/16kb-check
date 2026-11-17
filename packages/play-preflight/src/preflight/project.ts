@@ -7,6 +7,7 @@ import { parseVersionCatalog } from "../sixteenkb/check/toml";
 import { classifyBuildFile, includedBuildDirs } from "../sixteenkb/check/modules";
 import type { ParseResult, VersionCatalog } from "../sixteenkb/check/types";
 import { parseXml } from "./xml";
+import { SOURCE_MANIFEST_NOTE } from "./output";
 import { mergeManifests, qualifyName, readManifest, type ManifestInfo } from "./manifest";
 import { parseProperties, resolveSdk, resolveTargetSdk, stripComments, type TargetSdkSource, type TextFile } from "./targetsdk";
 
@@ -256,7 +257,7 @@ export function scanProject(start: string, opts: ScanOptions = {}): ProjectScan 
     manifestKind = "source";
     manifestNote =
       manifestNote ??
-      "Read from source manifests. Permissions and services that libraries add at build time aren't included. Build once (or pass --apk) for the full picture.";
+      SOURCE_MANIFEST_NOTE;
   }
   if (manifest && target.value === undefined && manifest.targetSdk !== undefined) {
     Object.assign(target, { value: manifest.targetSdk, from: manifest.files[0] });

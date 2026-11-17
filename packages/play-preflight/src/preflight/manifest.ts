@@ -12,6 +12,8 @@ export type ManifestComponent = {
   file: string;
   /** 1-based line of the component tag in `file`, when known. */
   line?: number;
+  /** 1-based line of each attribute name, when known. */
+  attrLines?: Record<string, number>;
 };
 
 export type ManifestPermission = { name: string; maxSdk?: number; file: string; line?: number };
@@ -35,6 +37,7 @@ export type ManifestInfo = {
   /** File and line of the <application> tag that won the merge, when known. */
   applicationFile?: string;
   applicationLine?: number;
+  applicationAttrLines?: Record<string, number>;
 };
 
 export function emptyManifest(): ManifestInfo {
@@ -80,6 +83,7 @@ function component(el: XmlElement, file: string): ManifestComponent {
     actions,
     file,
     line: el.line,
+    attrLines: el.attrLines,
   };
 }
 
@@ -118,6 +122,7 @@ export function readManifest(doc: XmlElement, file: string): ManifestInfo & { re
     m.application = { ...app.attrs };
     m.applicationFile = file;
     m.applicationLine = app.line;
+    m.applicationAttrLines = app.attrLines;
     m.appProperties = nameValue(childrenNamed(app, "property"));
     m.appMetaData = nameValue(childrenNamed(app, "meta-data"));
     for (const a of childrenNamed(app, "activity")) if (a.attrs["tools:node"] !== "remove") m.activities.push(component(a, file));
@@ -142,9 +147,10 @@ export function mergeManifests(parts: (ManifestInfo & { removedPermissions?: str
     if (p.minSdk !== undefined) out.minSdk = p.minSdk;
     if (p.compileSdk !== undefined) out.compileSdk = p.compileSdk;
     Object.assign(out.application, p.application);
-    if (p.applicationFile || p.applicationLine !== undefined) {
+    if (p.applicationFile || p.applicationLine !== undefined || p.applicationAttrLines) {
       out.applicationFile = p.applicationFile ?? p.files[0];
       out.applicationLine = p.applicationLine;
+      out.applicationAttrLines = p.applicationAttrLines;
     }
     Object.assign(out.appProperties, p.appProperties);
     Object.assign(out.appMetaData, p.appMetaData);

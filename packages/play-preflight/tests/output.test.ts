@@ -24,8 +24,9 @@ test("ready-app default output: compact PASS, collapsed SKIP, caveat once, no pa
   assert.match(lines[0]!, /play-preflight check {2}· {2}app {2}· {2}source only {2}· {2}targetSdk 36/);
   assert.match(lines[0]!, /compileSdk /);
   assert.match(lines[1]!, /^\d+ pass · 0 warn · 0 fail · \d+ skip/);
-  assert.equal(out.split("Read from source manifests.").length - 1, 1);
-  assert.doesNotMatch(out, /^Note: Read from source manifests/m);
+  assert.match(out, /source only: build-time permissions not included \(pass --apk for the full picture\)/);
+  assert.equal(out.split("source only: build-time permissions not included").length - 1, 1);
+  assert.doesNotMatch(out, /^Note: source only/m);
   assert.doesNotMatch(out, /Next: API 37/);
   assert.doesNotMatch(out, /Check your insets on a real device/);
   assert.equal(linkCount(out).rules, 0);
@@ -52,7 +53,11 @@ test("ready-app default output: compact PASS, collapsed SKIP, caveat once, no pa
 test("ready-app --verbose shows links, side notes, and SDK 'from' details", async () => {
   const { out, exitCode } = await runText([fixture("ready-app"), "--offline", "--no-color", "--verbose"]);
   assert.equal(exitCode, 0);
-  assert.match(out.split("\n")[0]!, /targetSdk 36, from /);
+  assert.match(out.split("\n")[0]!, /targetSdk 36  minSdk 24  compileSdk 36/);
+  assert.doesNotMatch(out.split("\n")[0]!, /from /);
+  assert.match(out, /^from /m);
+  assert.equal(out.split("\n").filter((l) => l.startsWith("from ")).length, 1);
+  assert.doesNotMatch(out, /targetSdk 36, from /);
   assert.match(out, /Next: API 37/);
   assert.match(out, /Check your insets on a real device/);
   const links = linkCount(out);
@@ -184,4 +189,59 @@ test("unknown --format exits 2", async () => {
   const r = await runText([fixture("ready-app"), "--format", "sarif"]);
   assert.equal(r.exitCode, 2);
   assert.match(r.err, /Unknown --format: sarif/);
+});
+
+test("summary is printed once on a TTY, and again at the bottom for CI or --format github", async () => {
+  const summary = "9 pass · 0 warn · 0 fail · 2 skip";
+  const { runCheck } = await import("../src/preflight/run.ts");
+  let tty = "";
+  await runCheck([fixture("ready-app"), "--offline", "--no-color"], {
+    stdout: { write: (s: string) => void (tty += s), isTTY: true },
+    stderr: { write: () => {} },
+  });
+  assert.equal(tty.split("\n")[1], summary);
+  assert.equal(tty.split("\n").filter((l) => l === summary).length, 1, tty);
+
+  const ci = await runText([fixture("ready-app"), "--offline", "--no-color"]);
+  assert.equal(ci.out.split("\n").filter((l) => l === summary).length, 2, ci.out);
+
+  const gh = await runText([fixture("legacy-app"), "--format", "github", "--no-color"], {
+    catalog: CATALOG,
+    enqueue: false,
+  });
+  const ghSummary = "0 pass · 7 warn · 3 fail · 0 skip · 1 info";
+  assert.equal(gh.out.split("\n").filter((l) => l === ghSummary).length, 2, gh.out);
+});
+
+test("large-screens locations use the triggering attribute line, not just the tag line", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "play-preflight-attr-line-"));
+  try {
+    await writeFile(join(dir, "settings.gradle.kts"), "include(\":app\")\n");
+    await mkdir(join(dir, "app/src/main"), { recursive: true });
+    await writeFile(
+      join(dir, "app/build.gradle.kts"),
+      'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdk = 36 } }\n',
+    );
+    await writeFile(
+      join(dir, "app/src/main/AndroidManifest.xml"),
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name=".SplashActivity"
+            android:screenOrientation="portrait" />
+    </application>
+</manifest>
+`,
+    );
+    const { out } = await runText([dir, "--offline", "--no-color", "--only", "large-screens"]);
+    assert.match(out, /SplashActivity {2}app\/src\/main\/AndroidManifest\.xml:5 {2}portrait/);
+    const { json } = await runJson([dir, "--offline", "--only", "large-screens"]);
+    const ls = json.checks.find((c) => c.id === "large-screens")!;
+    assert.equal(ls.locations?.[0]?.line, 5);
+    assert.match(ls.locations?.[0]?.message ?? "", /SplashActivity locks portrait/);
+    const gh = await runText([dir, "--offline", "--no-color", "--only", "large-screens", "--format", "github"]);
+    assert.match(gh.out, /::warning file=app\/src\/main\/AndroidManifest\.xml,line=5,title=Large screens::SplashActivity locks portrait/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

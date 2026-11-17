@@ -76,7 +76,7 @@ test("legacy app: fails exit 1, and every check line carries a Google source and
   }
 });
 
-test("text output: header, summary at both ends, links only on fail/warn/info, one source caveat", async () => {
+test("text output: header, summary at the top and again at the bottom when stdout is not a TTY, one source caveat", async () => {
   const { out, exitCode } = await runText([fixture("legacy-app"), "--no-color"], { catalog: CATALOG, enqueue: false });
   assert.equal(exitCode, 1);
   const statusLines = out.split("\n").filter((l) => /^(PASS|WARN|FAIL|SKIP|INFO)  /.test(l));
@@ -84,9 +84,11 @@ test("text output: header, summary at both ends, links only on fail/warn/info, o
   assert.equal(out.split("\n").filter((l) => l.startsWith("      Rule: https://")).length, CHECK_IDS.length);
   assert.equal(out.split("\n").filter((l) => l.startsWith("      → https://devbooth.dev/")).length, CHECK_IDS.length);
   assert.match(out, /^play-preflight check {2}· {2}app {2}· {2}source only {2}· {2}targetSdk 35  minSdk 23  compileSdk 35$/m);
+  assert.equal(out.split("\n")[1], "0 pass · 7 warn · 3 fail · 0 skip · 1 info");
   assert.equal(out.split("\n").filter((l) => l === "0 pass · 7 warn · 3 fail · 0 skip · 1 info").length, 2);
-  assert.equal(out.split("Read from source manifests.").length - 1, 1);
-  assert.doesNotMatch(out, /^Note: Read from source manifests/m);
+  assert.match(out, /source only: build-time permissions not included \(pass --apk for the full picture\)/);
+  assert.equal(out.split("source only: build-time permissions not included").length - 1, 1);
+  assert.doesNotMatch(out, /^Note: source only/m);
   assert.doesNotMatch(out, /Next: API 37/);
   assert.doesNotMatch(out, /\u001b\[/);
 });

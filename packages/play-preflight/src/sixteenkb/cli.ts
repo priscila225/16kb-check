@@ -23,7 +23,7 @@ Options:
   --path <dir>         Project root (default: current directory)
   --json               Print JSON instead of a table
   --ci                 Exit 1 if any library is not ready or only partially ready
-  --verbose, -v        List ready libraries too (hidden by default)
+  --verbose, -v        List every public library, build plugins and notes (default: counts, skipped libraries, AGP and the deadline)
   --no-submit          Download the public SDK list, but never send unknown SDK names
   --no-auto-check      Same as --no-submit
   --no-color           Disable color (also when stdout is not a TTY, or NO_COLOR is set)

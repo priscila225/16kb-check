@@ -77,38 +77,43 @@ test("--help and --version", async () => {
   assert.equal(ver.out, `${VERSION}\n`);
 });
 
-test("table output on the fixture includes expected statuses, links, and the deadline", async () => {
+test("default 16kb output is the counts, skipped line, AGP verdict and deadline", async () => {
   const { result, out } = await capture(["--path", fixture, "--no-color"]);
   assert.equal(result.exitCode, 0);
-  assert.doesNotMatch(out, /okhttp/, "ready rows are hidden by default");
-  assert.match(out, /5 ready libraries are hidden/);
-  assert.match(out, /io\.sentry:sentry-android/);
-  assert.match(out, /7\.14\.0/);
-  assert.match(out, /not ready/);
-  assert.match(out, /Min 16 KB version: 7\.18\.0/);
-  assert.match(out, /https:\/\/devbooth\.dev\/16kb\/sdk\/sentry-android/);
-  assert.match(out, /com\.mapbox\.maps:android/);
-  assert.match(out, /partial/);
-  assert.match(out, /ready/);
-  assert.match(out, /SDK\s+Version\s+Status\s+Link/);
-  const verbose = await capture(["--path", fixture, "--no-color", "--verbose"]);
-  assert.match(verbose.out, /okhttp/);
-  assert.doesNotMatch(verbose.out, /hidden/);
-  // Plugins live in their own section, not in the library rows or counts.
-  assert.ok(!result.report!.rows.some((r) => r.configuration === "plugin"));
-  assert.match(out, /Build plugins \(build-time only/);
-  assert.match(out, /com\.android\.application\s+8\.7\.3/);
+  assert.match(out, /7 public libraries: 5 ready, 1 not ready, 1 partial, 0 checking, 0 unknown\. \(use --verbose to list\)/);
+  assert.doesNotMatch(out, /ready libraries are hidden/);
+  assert.doesNotMatch(out, /okhttp/);
+  assert.doesNotMatch(out, /io\.sentry:sentry-android/);
+  assert.doesNotMatch(out, /SDK\s+Version\s+Status\s+Link/);
+  assert.doesNotMatch(out, /Build plugins \(build-time only/);
+  assert.doesNotMatch(out, /dependency-level check/);
+  assert.doesNotMatch(out, /zipalign/);
+  assert.doesNotMatch(out, /via BOM/);
+  assert.match(out, /2 private or internal libraries were skipped and never sent, 2 test-only dependencies were ignored\./);
   assert.match(out, /AGP check: Android Gradle Plugin 8\.7\.3 is 8\.5\.1 or newer/);
-  assert.match(out, /7 public libraries: 5 ready, 1 not ready, 1 partial/);
-  assert.match(out, /2 test-only dependencies were ignored/);
-  assert.match(out, /dependency-level check/);
-  assert.ok(out.includes("zipalign -c -P 16 -v 4 app.apk"));
-  assert.ok(out.includes("via BOM"));
-  assert.ok(!out.includes("…"), "nothing is truncated");
-  assert.match(out, /private or internal/);
   assert.ok(out.includes(DEADLINE_NOTE));
+  assert.ok(!result.report!.rows.some((r) => r.configuration === "plugin"));
   assert.ok(result.report);
   assert.equal(ciShouldFail(result.report!), true);
+
+  const verbose = await capture(["--path", fixture, "--no-color", "--verbose"]);
+  assert.match(verbose.out, /SDK\s+Version\s+Status\s+Link/);
+  assert.match(verbose.out, /io\.sentry:sentry-android/);
+  assert.match(verbose.out, /7\.14\.0/);
+  assert.match(verbose.out, /not ready/);
+  assert.match(verbose.out, /Min 16 KB version: 7\.18\.0/);
+  assert.match(verbose.out, /https:\/\/devbooth\.dev\/16kb\/sdk\/sentry-android/);
+  assert.match(verbose.out, /com\.mapbox\.maps:android/);
+  assert.match(verbose.out, /partial/);
+  assert.match(verbose.out, /okhttp/);
+  assert.doesNotMatch(verbose.out, /use --verbose to list/);
+  assert.match(verbose.out, /Build plugins \(build-time only/);
+  assert.match(verbose.out, /com\.android\.application\s+8\.7\.3/);
+  assert.match(verbose.out, /dependency-level check/);
+  assert.ok(verbose.out.includes("zipalign -c -P 16 -v 4 app.apk"));
+  assert.ok(verbose.out.includes("via BOM"));
+  assert.ok(!verbose.out.includes("…"), "nothing is truncated");
+  assert.ok(verbose.out.includes(DEADLINE_NOTE));
 });
 
 test("--ci exits 1 when a library is not ready or partial", async () => {
@@ -146,15 +151,18 @@ test("bundles fixture: bundles resolve, plugins are separate, AGP below 8.5.1 wa
   const { result, out } = await capture(["--path", bundlesFixture, "--no-color"]);
   assert.equal(result.exitCode, 0);
   assert.doesNotMatch(out, /Could not resolve/);
-  assert.match(out, /ready libraries are hidden/);
+  assert.match(out, /use --verbose to list/);
+  assert.doesNotMatch(out, /ready libraries are hidden/);
+  assert.doesNotMatch(out, /com\.squareup\.moshi:moshi/);
+  assert.match(out, /Warning: Android Gradle Plugin 8\.3\.2 is below 8\.5\.1/);
+  assert.doesNotMatch(out, /com\.android\.tools\.build:gradle/);
   const verbose = await capture(["--path", bundlesFixture, "--no-color", "--verbose"]);
   for (const c of ["com.squareup.moshi:moshi", "com.squareup.retrofit2:retrofit", "androidx.appcompat:appcompat", "androidx.compose.material3:material3-adaptive-navigation-suite"]) {
     assert.ok(verbose.out.includes(c), `${c} is shown in full`);
   }
-  assert.match(out, /Warning: Android Gradle Plugin 8\.3\.2 is below 8\.5\.1/);
-  assert.match(out, /com\.android\.tools\.build:gradle\s+8\.3\.2/);
-  assert.match(out, /org\.jetbrains\.kotlin\.plugin\.compose\s+2\.0\.21/);
-  assert.match(out, /1 private or unrecognized plugin is not shown/);
+  assert.match(verbose.out, /com\.android\.tools\.build:gradle\s+8\.3\.2/);
+  assert.match(verbose.out, /org\.jetbrains\.kotlin\.plugin\.compose\s+2\.0\.21/);
+  assert.match(verbose.out, /1 private or unrecognized plugin is not shown/);
   assert.doesNotMatch(out, /acme/);
   assert.match(out, /5 test-only dependencies were ignored/);
   assert.doesNotMatch(out, /junit|mockito|hilt-compiler|androidx\.test|ui-test-manifest/);
@@ -188,6 +196,10 @@ test("a still-checking library shows the settling note in text and JSON", async 
     enqueue: false,
   };
   await run(["--path", fixture, "--no-color"], io);
+  assert.match(out, /checking/);
+  assert.doesNotMatch(out, /Results are still settling/);
+  out = "";
+  await run(["--path", fixture, "--no-color", "--verbose"], io);
   assert.match(out, /Results are still settling/);
   assert.match(out, /Re-run in a few minutes/);
   out = "";

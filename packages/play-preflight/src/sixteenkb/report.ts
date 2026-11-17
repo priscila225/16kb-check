@@ -222,51 +222,6 @@ export function formatTable(
   const rows = rowsFromReport(report);
   const counts = countStatuses(rows);
   const lines: string[] = [];
-  const hiddenReady = verbose ? [] : rows.filter((r) => r.status === "ready");
-  const visible = verbose ? rows : rows.filter((r) => r.status !== "ready");
-
-  const sdkW = Math.max(3, ...visible.map((r) => r.sdk.length), 3);
-  const verW = Math.max(7, ...visible.map((r) => r.version.length), 7);
-  const statusW = 9;
-
-  if (visible.length) {
-    const header = [pad("SDK", sdkW), pad("Version", verW), pad("Status", statusW), "Link"].join("  ");
-    lines.push(paint(color, ANSI.bold, header));
-    lines.push(paint(color, ANSI.dim, ["─".repeat(sdkW), "─".repeat(verW), "─".repeat(statusW), "─".repeat(4)].join("  ")));
-  }
-
-  const statusColor = (s: CliStatus): string => {
-    if (s === "ready") return ANSI.green;
-    if (s === "not ready") return ANSI.red;
-    if (s === "partial") return ANSI.yellow;
-    if (s === "checking") return ANSI.cyan;
-    return ANSI.gray;
-  };
-
-  for (const r of visible) {
-    const cells = [
-      pad(r.sdk, sdkW),
-      pad(r.version, verW),
-      pad(paint(color, statusColor(r.status), r.status), statusW),
-      r.link,
-    ];
-    lines.push(cells.join("  ").trimEnd());
-    if ((r.status === "not ready" || r.status === "partial") && r.minVersion && r.minVersion !== "—") {
-      lines.push(paint(color, ANSI.dim, `    Min 16 KB version: ${r.minVersion}`));
-    }
-  }
-
-  if (!rows.length) {
-    lines.push(paint(color, ANSI.dim, "No public library coordinates were found in this project."));
-  }
-
-  if (rows.some((r) => r.bom)) {
-    lines.push("");
-    const boms = [...new Set(rows.map((r) => r.bom).filter((b): b is string => !!b))];
-    lines.push(`"via BOM" means the version comes from ${boms.length === 1 ? "this BOM" : "one of these BOMs"}: ${boms.join(", ")}`);
-  }
-
-  lines.push("");
   const parts = [
     `${counts.ready} ready`,
     `${counts["not ready"]} not ready`,
@@ -274,60 +229,106 @@ export function formatTable(
     `${counts.checking} checking`,
     `${counts.unknown} unknown`,
   ];
-  lines.push(`${rows.length} public ${rows.length === 1 ? "library" : "libraries"}: ${parts.join(", ")}.`);
-  if (hiddenReady.length) {
-    const n = hiddenReady.length;
-    lines.push(`${n} ready ${n === 1 ? "library is" : "libraries are"} hidden. Use --verbose to list them.`);
-  }
+  const countLine =
+    `${rows.length} public ${rows.length === 1 ? "library" : "libraries"}: ${parts.join(", ")}.` +
+    (!verbose && rows.length ? " (use --verbose to list)" : "");
+
+  const skippedBits: string[] = [];
   if (skippedPrivate) {
     const n = skippedPrivate;
-    lines.push(
-      `${n} private or internal ${n === 1 ? "library was" : "libraries were"} skipped on this machine and never sent.`,
-    );
+    skippedBits.push(`${n} private or internal ${n === 1 ? "library was" : "libraries were"} skipped and never sent`);
   }
   if (extras.testOnlyIgnored) {
     const n = extras.testOnlyIgnored;
-    lines.push(`${n} test-only ${n === 1 ? "dependency was" : "dependencies were"} ignored (test, androidTest, testFixtures and test frameworks).`);
+    skippedBits.push(`${n} test-only ${n === 1 ? "dependency was" : "dependencies were"} ignored`);
   }
   if (extras.buildToolingIgnored) {
     const n = extras.buildToolingIgnored;
-    lines.push(`${n} build-time ${n === 1 ? "dependency was" : "dependencies were"} ignored (annotation processors, buildSrc, build-logic, convention plugins, lint checks, Gradle plugin artifacts).`);
+    skippedBits.push(`${n} build-time ${n === 1 ? "dependency was" : "dependencies were"} ignored`);
   }
-  lines.push(report.verdictLine);
-  if (counts.checking) {
-    lines.push(paint(color, ANSI.cyan, SETTLING_NOTE));
-  }
+  const skippedLine = skippedBits.length ? `${skippedBits.join(", ")}.` : undefined;
 
-  const plugins = extras.plugins || [];
   const agp = agpOf(extras);
-  lines.push("");
-  lines.push(paint(color, ANSI.bold, "Build plugins (build-time only, not packaged into your app, not counted above):"));
-  if (plugins.length) {
-    const idW = Math.max(...plugins.map((p) => p.id.length));
-    for (const p of plugins) lines.push(`  ${pad(p.id, idW)}  ${p.version || "—"}`.trimEnd());
-  } else {
-    lines.push(paint(color, ANSI.dim, "  None found."));
-  }
-  if (extras.hiddenPlugins) {
-    const n = extras.hiddenPlugins;
-    lines.push(paint(color, ANSI.dim, `  ${n} private or unrecognized ${n === 1 ? "plugin is" : "plugins are"} not shown.`));
-  }
-  if (agp.status === "warning") lines.push(paint(color, ANSI.yellow, `Warning: ${agp.message}`));
-  else if (agp.status === "ok") lines.push(`AGP check: ${agp.message}`);
-  else lines.push(paint(color, ANSI.dim, agp.message));
+  const agpLine =
+    agp.status === "warning"
+      ? paint(color, ANSI.yellow, `Warning: ${agp.message}`)
+      : agp.status === "ok"
+        ? `AGP check: ${agp.message}`
+        : paint(color, ANSI.dim, agp.message);
 
-  if (report.issues.length) {
+  if (verbose) {
+    const sdkW = Math.max(3, ...rows.map((r) => r.sdk.length), 3);
+    const verW = Math.max(7, ...rows.map((r) => r.version.length), 7);
+    const statusW = 9;
+    if (rows.length) {
+      const header = [pad("SDK", sdkW), pad("Version", verW), pad("Status", statusW), "Link"].join("  ");
+      lines.push(paint(color, ANSI.bold, header));
+      lines.push(paint(color, ANSI.dim, ["─".repeat(sdkW), "─".repeat(verW), "─".repeat(statusW), "─".repeat(4)].join("  ")));
+    }
+    const statusColor = (s: CliStatus): string => {
+      if (s === "ready") return ANSI.green;
+      if (s === "not ready") return ANSI.red;
+      if (s === "partial") return ANSI.yellow;
+      if (s === "checking") return ANSI.cyan;
+      return ANSI.gray;
+    };
+    for (const r of rows) {
+      const cells = [
+        pad(r.sdk, sdkW),
+        pad(r.version, verW),
+        pad(paint(color, statusColor(r.status), r.status), statusW),
+        r.link,
+      ];
+      lines.push(cells.join("  ").trimEnd());
+      if ((r.status === "not ready" || r.status === "partial") && r.minVersion && r.minVersion !== "—") {
+        lines.push(paint(color, ANSI.dim, `    Min 16 KB version: ${r.minVersion}`));
+      }
+    }
+    if (!rows.length) {
+      lines.push(paint(color, ANSI.dim, "No public library coordinates were found in this project."));
+    }
+    if (rows.some((r) => r.bom)) {
+      lines.push("");
+      const boms = [...new Set(rows.map((r) => r.bom).filter((b): b is string => !!b))];
+      lines.push(`"via BOM" means the version comes from ${boms.length === 1 ? "this BOM" : "one of these BOMs"}: ${boms.join(", ")}`);
+    }
     lines.push("");
-    for (const issue of report.issues) {
-      lines.push(`Note (${issue.file}): ${issue.message}`);
+  } else if (!rows.length) {
+    lines.push(paint(color, ANSI.dim, "No public library coordinates were found in this project."));
+  }
+
+  lines.push(countLine);
+  if (skippedLine) lines.push(skippedLine);
+  if (verbose) {
+    lines.push(report.verdictLine);
+    if (counts.checking) lines.push(paint(color, ANSI.cyan, SETTLING_NOTE));
+    const plugins = extras.plugins || [];
+    lines.push("");
+    lines.push(paint(color, ANSI.bold, "Build plugins (build-time only, not packaged into your app, not counted above):"));
+    if (plugins.length) {
+      const idW = Math.max(...plugins.map((p) => p.id.length));
+      for (const p of plugins) lines.push(`  ${pad(p.id, idW)}  ${p.version || "—"}`.trimEnd());
+    } else {
+      lines.push(paint(color, ANSI.dim, "  None found."));
+    }
+    if (extras.hiddenPlugins) {
+      const n = extras.hiddenPlugins;
+      lines.push(paint(color, ANSI.dim, `  ${n} private or unrecognized ${n === 1 ? "plugin is" : "plugins are"} not shown.`));
     }
   }
-  if (report.notes.length) {
+  lines.push(agpLine);
+  if (verbose) {
+    if (report.issues.length) {
+      lines.push("");
+      for (const issue of report.issues) lines.push(`Note (${issue.file}): ${issue.message}`);
+    }
+    if (report.notes.length) {
+      lines.push("");
+      for (const n of report.notes) lines.push(`Note: ${n}`);
+    }
     lines.push("");
-    for (const n of report.notes) lines.push(`Note: ${n}`);
+    lines.push(SCOPE_NOTE);
   }
-  lines.push("");
-  lines.push(SCOPE_NOTE);
   lines.push(DEADLINE_NOTE);
   return lines.join("\n") + "\n";
 }

@@ -110,3 +110,27 @@ test("XML opening tags carry 1-based line numbers", () => {
   assert.equal(info.activities[0].line, 4);
   assert.equal(info.activities[0].name, ".A");
 });
+
+test("XML attribute names keep their own line numbers, falling back to the tag line", () => {
+  const doc = parseXml(`<manifest>
+  <application>
+    <activity
+        android:name=".CameraActivity"
+        android:screenOrientation="sensorPortrait"
+        android:resizeableActivity="false" />
+    <activity android:name=".Wide" android:maxAspectRatio="2.1" />
+  </application>
+</manifest>
+`);
+  const app = doc.children[0].children[0];
+  const camera = app.children[0];
+  assert.equal(camera.line, 3);
+  assert.equal(camera.attrLines!["android:name"], 4);
+  assert.equal(camera.attrLines!["android:screenOrientation"], 5);
+  assert.equal(camera.attrLines!["android:resizeableActivity"], 6);
+  const wide = app.children[1];
+  assert.equal(wide.line, 7);
+  assert.equal(wide.attrLines!["android:maxAspectRatio"], 7);
+  const info = readManifest(doc, "app/src/main/AndroidManifest.xml");
+  assert.equal(info.activities[0].attrLines!["android:screenOrientation"], 5);
+});

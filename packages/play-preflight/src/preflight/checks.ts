@@ -100,6 +100,12 @@ function at(file: string, line?: number): string {
   return line !== undefined ? `${file}:${line}` : file;
 }
 
+/** Earliest line among the attributes that triggered a finding, else the tag line. */
+function triggerLine(attrLines: Record<string, number> | undefined, names: string[], fallback?: number): number | undefined {
+  const lines = names.map((n) => attrLines?.[n]).filter((n): n is number => n !== undefined);
+  return lines.length ? Math.min(...lines) : fallback;
+}
+
 const RANK: Record<CheckStatus, number> = { skip: 0, info: 1, pass: 2, warn: 3, fail: 4 };
 
 function worst(statuses: CheckStatus[]): CheckStatus {
@@ -474,22 +480,36 @@ export function checkLargeScreens(ctx: CheckContext): CheckResult {
   const appNotResizable = isFalse(m.application["android:resizeableActivity"]);
   if (appNotResizable) {
     const file = m.applicationFile ?? m.files[0] ?? "AndroidManifest.xml";
-    const line = m.applicationLine;
+    const line = triggerLine(m.applicationAttrLines, ["android:resizeableActivity"], m.applicationLine);
     items.push(`application  ${at(file, line)}  resizeableActivity=false`);
     locations.push({ file, line, message: "application sets resizeableActivity=false" });
   }
   for (const a of m.activities) {
     const bits: string[] = [];
+    const triggers: string[] = [];
     const o = (a.attrs["android:screenOrientation"] ?? "").trim();
-    if (LOCKED_ORIENTATIONS.has(o)) bits.push(o);
-    if (isFalse(a.attrs["android:resizeableActivity"])) bits.push("resizeableActivity=false");
-    if (a.attrs["android:minAspectRatio"]) bits.push(`minAspectRatio=${a.attrs["android:minAspectRatio"]}`);
-    if (a.attrs["android:maxAspectRatio"]) bits.push(`maxAspectRatio=${a.attrs["android:maxAspectRatio"]}`);
+    if (LOCKED_ORIENTATIONS.has(o)) {
+      bits.push(o);
+      triggers.push("android:screenOrientation");
+    }
+    if (isFalse(a.attrs["android:resizeableActivity"])) {
+      bits.push("resizeableActivity=false");
+      triggers.push("android:resizeableActivity");
+    }
+    if (a.attrs["android:minAspectRatio"]) {
+      bits.push(`minAspectRatio=${a.attrs["android:minAspectRatio"]}`);
+      triggers.push("android:minAspectRatio");
+    }
+    if (a.attrs["android:maxAspectRatio"]) {
+      bits.push(`maxAspectRatio=${a.attrs["android:maxAspectRatio"]}`);
+      triggers.push("android:maxAspectRatio");
+    }
     if (!bits.length) continue;
     const cls = shortClass(a.name);
     const attr = bits.join(", ");
-    items.push(`${cls}  ${at(a.file, a.line)}  ${attr}`);
-    locations.push({ file: a.file, line: a.line, message: `${cls} locks ${attr}` });
+    const line = triggerLine(a.attrLines, triggers, a.line);
+    items.push(`${cls}  ${at(a.file, line)}  ${attr}`);
+    locations.push({ file: a.file, line, message: `${cls} locks ${attr}` });
   }
   const optOut =
     isTrue(m.appProperties[RESIZABILITY_OPT_OUT]) || m.activities.some((a) => isTrue(a.properties[RESIZABILITY_OPT_OUT]));

@@ -32,12 +32,12 @@ The API 37 target deadline isn't announced yet, so play-preflight doesn't print 
 
 ## Sample output
 
-From `npx play-preflight check tests/fixtures/ready-app --offline --no-color` (17 lines; the same fixture was 48 lines before this layout):
+From `npx play-preflight check tests/fixtures/ready-app --offline --no-color` in a terminal (the same fixture was 48 lines before the scannable layout):
 
 ```
 play-preflight check  ·  app  ·  source only  ·  targetSdk 36  minSdk 24  compileSdk 36
 9 pass · 0 warn · 0 fail · 2 skip
-Read from source manifests. Permissions and services that libraries add at build time aren't included. Build once (or pass --apk) for the full picture.
+source only: build-time permissions not included (pass --apk for the full picture)
 
 PASS  Target API level        targets 36. Play needs 36 for new apps and updates since Aug 31, 2026
 PASS  Play Billing Library    9.0.0 (supported until Aug 31, 2028)
@@ -50,13 +50,14 @@ PASS  Exact alarms            no exact alarm permissions
 PASS  Restricted permissions  no restricted permissions that need a declaration
 SKIP  16 KB page size (offline and no APK/AAB given, so nothing to check. Pass --apk or --aab to check the native libraries), Account deletion (no sign-in SDK found)
 
-9 pass · 0 warn · 0 fail · 2 skip
 Checked fully offline. Nothing left this machine.
 ```
 
-`--verbose` (or `-v`) adds Rule and devbooth links on every check, side notes like "Next: API 37", and `from` details in the header. `--format github` prints `::error` / `::warning` / `::notice` annotations with file and line when known, then the same report, which GitHub Actions will attach to the pull request.
+The summary line is at the top. When stdout is not a TTY, or with `--format github`, it is also printed at the bottom so CI log tails still show it.
 
-A failing app lists FAIL, then WARN, then INFO, each with details. Large-screen locks look like `PlayerActivity  app/src/main/AndroidManifest.xml:14  portrait`, with a fix hint and at most five activities unless you pass `--verbose`.
+`--verbose` (or `-v`) adds Rule and devbooth links on every check, side notes like "Next: API 37", and a single `from <file>` line in the header. `--format github` prints `::error` / `::warning` / `::notice` annotations with file and line when known, then the same report, which GitHub Actions will attach to the pull request.
+
+A failing app lists FAIL, then WARN, then INFO, each with details. Large-screen locks look like `PlayerActivity  app/src/main/AndroidManifest.xml:14  portrait`, pointing at the line of the attribute that triggered the finding (for example `screenOrientation`), with a fix hint and at most five activities unless you pass `--verbose`.
 
 ## Usage
 
@@ -159,7 +160,7 @@ The only network call is the public SDK lookup used by the `16kb` check:
 
 ## The `16kb` command
 
-`npx play-preflight 16kb` is the 16 KB SDK table that `16kb-check` printed, with the same options (`--path`, `--json`, `--ci`, `--no-color`, plus `--no-submit` and `--verbose`). By default it shows the counts and only the rows that are not ready, partial, unknown or checking. Use `--verbose` to list ready libraries too.
+`npx play-preflight 16kb` is the 16 KB check that `16kb-check` printed, with the same options (`--path`, `--json`, `--ci`, `--no-color`, plus `--no-submit` and `--verbose`). By default it prints the public SDK counts, one line for skipped private, test-only and build-time dependencies, the AGP verdict and the deadline. `--verbose` lists every public library, the build plugins, notes and the APK verification tip.
 
 Exit codes for `16kb`: `0` ok (not-ready libraries are reported, but the command still exits 0 unless `--ci`), `1` if `--ci` was set and a library is not ready or only partially ready, `2` bad usage or a runtime error.
 

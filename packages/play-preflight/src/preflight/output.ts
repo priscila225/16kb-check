@@ -22,7 +22,7 @@ const LABEL: Record<CheckStatus, string> = { pass: "PASS", warn: "WARN", fail: "
 const COLOR: Record<CheckStatus, string> = { pass: "32", warn: "33", fail: "31", skip: "90", info: "36" };
 
 export const SOURCE_MANIFEST_NOTE =
-  "Read from source manifests. Permissions and services that libraries add at build time aren't included. Build once (or pass --apk) for the full picture.";
+  "source only: build-time permissions not included (pass --apk for the full picture)";
 
 const LARGE_SCREEN_CAP = 5;
 
@@ -46,24 +46,36 @@ export function scannedLabel(header: Header): string {
   return "source only";
 }
 
-function sdkPart(name: string, value: number | undefined, from: string | undefined, verbose: boolean): string | undefined {
+function sdkPart(name: string, value: number | undefined): string | undefined {
   if (value === undefined) return undefined;
-  if (verbose && from) return `${name} ${value}, from ${from}`;
   return `${name} ${value}`;
 }
 
-export function headerLine(header: Header, verbose: boolean): string {
+function sourceFile(from: string): string {
+  return from.split(" via ")[0].trim();
+}
+
+/** One verbose header line naming where the SDK values were read, not repeated per value. */
+export function sdkFromLine(header: Header): string | undefined {
+  const entries: { name: string; from: string }[] = [];
+  if (header.targetFrom) entries.push({ name: "targetSdk", from: header.targetFrom });
+  if (header.minSdkFrom) entries.push({ name: "minSdk", from: header.minSdkFrom });
+  if (header.compileSdkFrom) entries.push({ name: "compileSdk", from: header.compileSdkFrom });
+  if (!entries.length) return undefined;
+  const files = new Set(entries.map((e) => sourceFile(e.from)));
+  if (files.size === 1) {
+    // Prefer the most specific wording, e.g. "app/build.gradle.kts via version catalog".
+    const best = [...entries].sort((a, b) => b.from.length - a.from.length)[0].from;
+    return `from ${best}`;
+  }
+  return entries.map((e) => `${e.name} from ${e.from}`).join("; ");
+}
+
+export function headerLine(header: Header): string {
   const name = header.module ?? (header.binary ? undefined : "app");
   const left = ["play-preflight check", name, scannedLabel(header)].filter(Boolean).join("  ·  ");
-  const tgt =
-    header.targetSdk !== undefined
-      ? sdkPart("targetSdk", header.targetSdk, header.targetFrom, verbose)
-      : "targetSdk not resolved";
-  const sdks = [
-    tgt,
-    sdkPart("minSdk", header.minSdk, header.minSdkFrom, verbose),
-    sdkPart("compileSdk", header.compileSdk, header.compileSdkFrom, verbose),
-  ].filter(Boolean);
+  const tgt = header.targetSdk !== undefined ? sdkPart("targetSdk", header.targetSdk) : "targetSdk not resolved";
+  const sdks = [tgt, sdkPart("minSdk", header.minSdk), sdkPart("compileSdk", header.compileSdk)].filter(Boolean);
   const ff = header.formFactor !== "phone" ? header.formFactor : undefined;
   return `${left}  ·  ${[...sdks, ff].filter(Boolean).join("  ")}`;
 }
@@ -118,10 +130,17 @@ export function formatCheckText(input: {
   verbose?: boolean;
   /** When true, the source-manifest caveat is printed once under the header. */
   sourceManifest?: boolean;
+  /** Repeat the summary at the bottom. On by default (CI); off for a TTY. */
+  repeatSummary?: boolean;
 }): string {
   const { header, results, counts, notes, privacy, color } = input;
   const verbose = !!input.verbose;
-  const lines: string[] = [headerLine(header, verbose), summaryLine(counts)];
+  const repeatSummary = input.repeatSummary ?? true;
+  const lines: string[] = [headerLine(header), summaryLine(counts)];
+  if (verbose) {
+    const from = sdkFromLine(header);
+    if (from) lines.push(from);
+  }
   if (input.sourceManifest) lines.push(SOURCE_MANIFEST_NOTE);
   const leftoverNotes = notes.filter((n) => n !== SOURCE_MANIFEST_NOTE);
   for (const n of leftoverNotes) lines.push(`Note: ${n}`);
@@ -164,7 +183,7 @@ export function formatCheckText(input: {
   }
 
   lines.push("");
-  lines.push(summaryLine(counts));
+  if (repeatSummary) lines.push(summaryLine(counts));
   lines.push(privacyLine(privacy));
   return lines.join("\n") + "\n";
 }
@@ -196,7 +215,7 @@ export function formatCheckGithub(input: {
       lines.push(`::${kind} ${params.join(",")}::${ghEscape(message)}`);
     }
   }
-  const text = formatCheckText({ ...input, color: false });
+  const text = formatCheckText({ ...input, color: false, repeatSummary: true });
   return (lines.length ? lines.join("\n") + "\n" : "") + text;
 }
 

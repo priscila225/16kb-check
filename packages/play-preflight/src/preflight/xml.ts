@@ -10,6 +10,8 @@ export type XmlElement = {
   text: string;
   /** 1-based line of the opening tag, when the document is text. */
   line?: number;
+  /** 1-based line of each attribute name, when the document is text. */
+  attrLines?: Record<string, number>;
 };
 
 function countNewlines(s: string): number {
@@ -115,9 +117,13 @@ export function parseXml(input: string): XmlElement {
     const body = selfClosing ? raw.slice(0, -1) : raw;
     const nameMatch = /^\s*([^\s/>]+)/.exec(body);
     if (!nameMatch) continue;
-    const el: XmlElement = { name: nameMatch[1], attrs: {}, children: [], text: "", line: startLine };
+    const el: XmlElement = { name: nameMatch[1], attrs: {}, children: [], text: "", line: startLine, attrLines: {} };
     const rest = body.slice(nameMatch[0].length);
-    for (const m of rest.matchAll(ATTR)) el.attrs[m[1]] = decodeEntities(m[2] ?? m[3] ?? "");
+    for (const m of rest.matchAll(ATTR)) {
+      el.attrs[m[1]] = decodeEntities(m[2] ?? m[3] ?? "");
+      const abs = lt + 1 + nameMatch[0].length + (m.index ?? 0);
+      el.attrLines![m[1]] = startLine + countNewlines(text.slice(lt, abs));
+    }
     stack[stack.length - 1].children.push(el);
     if (!selfClosing) stack.push(el);
   }
