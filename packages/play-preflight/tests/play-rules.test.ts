@@ -39,7 +39,8 @@ test("bundled snapshot parses and matches the exported dates", () => {
   const parsed = parsePlayRules(BUNDLED_PLAY_RULES);
   assert.ok(parsed);
   assert.equal(parsed.schemaVersion, PLAY_RULES_SCHEMA_VERSION);
-  assert.equal(parsed.updatedAt, "2026-11-16");
+  assert.equal(parsed.updatedAt, "2026-11-23");
+  assert.deepEqual(parsed.checks["target-api"].next, { targetSdk: 37, month: "2027-08" });
   assert.deepEqual(parsed.checks["target-api"].minTargetSdk, PLAY_MIN_TARGET);
   assert.equal(parsed.checks["target-api"].since, DATES.targetApi36);
   assert.equal(parsed.checks["16kb"].blockFrom, DATES.sixteenKbBlock);
@@ -101,7 +102,7 @@ test("check --offline uses bundled dates, makes no request, and mentions the sna
   assert.deepEqual(requests, []);
   assert.equal(json.playRules?.source, "bundled");
   assert.equal(json.playRules?.fallbackReason, "offline");
-  assert.equal(json.playRules?.updatedAt, "2026-11-16");
+  assert.equal(json.playRules?.updatedAt, "2026-11-23");
   const c = Object.fromEntries(json.checks.map((x) => [x.id, x]));
   assert.match(c["target-api"].detail, /Aug 31, 2026/);
   assert.match(c["play-billing"].detail, /Aug 31, 2028/);
@@ -109,7 +110,7 @@ test("check --offline uses bundled dates, makes no request, and mentions the sna
   const { out } = await runText([fixture("ready-app"), "--offline", "--no-color", "--verbose"], {
     api: client(() => { throw new Error("no network"); }),
   });
-  assert.match(out, /Play rules: bundled snapshot from Nov 16, 2026 \(--offline\)/);
+  assert.match(out, /Play rules: bundled snapshot from Nov 23, 2026 \(--offline\)/);
   assert.doesNotMatch(out.split("\n").filter((l) => !l.startsWith("Play rules:")) .join("\n"), /Play rules:/);
 });
 
@@ -142,8 +143,23 @@ test("online check uses live dates, including --no-submit, and only GETs play-ru
 });
 
 test("playRulesLine wording covers each fallback", () => {
-  assert.equal(playRulesLine({ source: "live", rules: BUNDLED_PLAY_RULES }), "Play rules: live from devbooth.dev, updated Nov 16, 2026");
-  assert.equal(playRulesLine(bundledPlayRules("offline")), "Play rules: bundled snapshot from Nov 16, 2026 (--offline)");
-  assert.equal(playRulesLine(bundledPlayRules("error")), "Play rules: bundled snapshot from Nov 16, 2026 (site didn't respond)");
-  assert.equal(playRulesLine(bundledPlayRules("unknown-schema")), "Play rules: bundled snapshot from Nov 16, 2026 (unrecognized data)");
+  assert.equal(playRulesLine({ source: "live", rules: BUNDLED_PLAY_RULES }), "Play rules: live from devbooth.dev, updated Nov 23, 2026");
+  assert.equal(playRulesLine(bundledPlayRules("offline")), "Play rules: bundled snapshot from Nov 23, 2026 (--offline)");
+  assert.equal(playRulesLine(bundledPlayRules("error")), "Play rules: bundled snapshot from Nov 23, 2026 (site didn't respond)");
+  assert.equal(playRulesLine(bundledPlayRules("unknown-schema")), "Play rules: bundled snapshot from Nov 23, 2026 (unrecognized data)");
+});
+
+test("target-api next is optional: missing or malformed is dropped, never a parse failure, and never gets a day", () => {
+  const without = structuredClone(BUNDLED_PLAY_RULES) as PlayRules;
+  delete without.checks["target-api"].next;
+  const a = parsePlayRules(without);
+  assert.ok(a);
+  assert.equal(a.checks["target-api"].next, undefined);
+  for (const bad of [{ targetSdk: 37, month: "2027-08-31" }, { targetSdk: "37", month: "2027-08" }, "August 2027"]) {
+    const copy = structuredClone(BUNDLED_PLAY_RULES) as Record<string, any>;
+    copy.checks["target-api"].next = bad;
+    const parsed = parsePlayRules(copy);
+    assert.ok(parsed, JSON.stringify(bad));
+    assert.equal(parsed.checks["target-api"].next, undefined);
+  }
 });

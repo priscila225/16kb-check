@@ -40,11 +40,16 @@ test("target-api: resolves from gradle.properties, convention plugins and Groovy
   assert.equal(forced.status, "fail");
 });
 
-test("target-api: no API 37 date is ever printed", async () => {
+test("target-api: the API 37 target shows as August 2027 only, never with a day", async () => {
   for (const name of ["target-phone-34", "target-tv-34", "restricted-api37"]) {
     const c = await one(name, "target-api");
-    assert.doesNotMatch(JSON.stringify(c), /2027|2028/);
+    assert.doesNotMatch(JSON.stringify(c), /Aug(ust)? \d{1,2}, 2027|2027-08-\d{2}|2028/);
   }
+  const below = await one("target-phone-34", "target-api");
+  const text = JSON.stringify(below);
+  if (/API 37/.test(text)) assert.match(text, /API 37 for new apps and updates from August 2027\. Google hasn't named a day\./);
+  const at37 = await one("restricted-api37", "target-api");
+  assert.doesNotMatch(JSON.stringify(at37), /Next: API 37/);
 });
 
 test("play-billing: 7 fails, 8 warns with the Aug 31, 2027 date, 9 passes, unresolved warns, absent skips", async () => {

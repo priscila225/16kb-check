@@ -2,8 +2,8 @@ import { BUNDLED_PLAY_RULES, fmtDate } from "./play-rules";
 
 /**
  * Every rule a check enforces, with the official Google page it comes from and the devbooth.dev page
- * that explains it. Only dates read on the official pages are used (checked Nov 16, 2026).
- * The API 37 target date isn't announced, so it's deliberately not here.
+ * that explains it. Only dates read on the official pages are used (checked Nov 16, 2026, rechecked Nov 23, 2026).
+ * Google Play announced the API 37 target for August 2027 without a day, so only the month is shown.
  */
 export const CHECK_IDS = [
   "target-api",

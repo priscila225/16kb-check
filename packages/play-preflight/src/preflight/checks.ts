@@ -5,7 +5,7 @@ import type { BinaryScan } from "./binary";
 import { hasPermission, isFalse, isTrue, sameComponent, type ManifestComponent, type ManifestInfo } from "./manifest";
 import type { TextFile } from "./targetsdk";
 import { PLAY_MIN_TARGET, RULES, fmtDate, type CheckId, type FormFactor } from "./rules";
-import type { PlayRulesChecks, ResolvedPlayRules } from "./play-rules";
+import { fmtMonth, type PlayRulesChecks, type ResolvedPlayRules } from "./play-rules";
 
 export type CheckStatus = "pass" | "warn" | "fail" | "skip" | "info";
 
@@ -148,7 +148,13 @@ export function checkTargetApi(ctx: CheckContext): CheckResult {
     const where = expr ? ` (set as \`${expr}\` in ${from})` : "";
     return result("target-api", "skip", `couldn't resolve targetSdk${where}. Pass --target-sdk <n>, build once, or use --apk`, [], play(ctx)["target-api"].since);
   }
-  const next = value < 37 ? ["Next: API 37. Google hasn't announced that date yet."] : [];
+  const announced = play(ctx)["target-api"].next;
+  const next =
+    announced && value < announced.targetSdk
+      ? [`Next: API ${announced.targetSdk} for new apps and updates from ${fmtMonth(announced.month)}. Google hasn't named a day.`]
+      : !announced && value < 37
+        ? ["Next: API 37. Google hasn't announced that date yet."]
+        : [];
   if (value >= required) {
     return result(
       "target-api",

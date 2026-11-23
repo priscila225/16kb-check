@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-16",
+  "updatedAt": "2026-11-23",
   "checks": {
     "target-api": {
       "minTargetSdk": {
@@ -11,7 +11,11 @@
       },
       "since": "2026-08-31",
       "extensionEnded": "2026-11-01",
-      "existingAppsHiddenBelow": 35
+      "existingAppsHiddenBelow": 35,
+      "next": {
+        "targetSdk": 37,
+        "month": "2027-08"
+      }
     },
     "16kb": {
       "blockFrom": "2027-02-01"

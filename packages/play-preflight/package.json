@@ -1,6 +1,6 @@
 {
   "name": "play-preflight",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Check an Android app against Google Play's current rules before you ship: target API, 16 KB pages, Play Billing, foreground services, edge to edge, large screens, predictive back and restricted permissions. Runs locally.",
   "keywords": [
     "android",

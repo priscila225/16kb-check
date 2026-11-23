@@ -8,6 +8,7 @@ export const PLAY_RULES_TIMEOUT_MS = 4000;
 export type FormFactor = "phone" | "wear" | "automotive" | "tv";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_MONTH = /^\d{4}-\d{2}$/;
 
 export type PlayRulesChecks = {
   "target-api": {
@@ -15,6 +16,8 @@ export type PlayRulesChecks = {
     since: string;
     extensionEnded: string;
     existingAppsHiddenBelow: number;
+    /** Next announced target. `month` is YYYY-MM because Google has not named a day. Optional for older payloads. */
+    next?: { targetSdk: number; month: string };
   };
   "16kb": { blockFrom: string };
   "play-billing": {
@@ -71,6 +74,14 @@ function isoDate(v: unknown): string | undefined {
   return typeof v === "string" && ISO_DATE.test(v) ? v : undefined;
 }
 
+/** Optional next target: dropped (not a parse failure) when missing or malformed, so the check falls back to "not announced". */
+function nextTarget(v: unknown): { targetSdk: number; month: string } | undefined {
+  if (!isObject(v)) return undefined;
+  const targetSdk = int(v.targetSdk);
+  const month = typeof v.month === "string" && ISO_MONTH.test(v.month) ? v.month : undefined;
+  return targetSdk !== undefined && month ? { targetSdk, month } : undefined;
+}
+
 function int(v: unknown, min = 1, max = 99): number | undefined {
   return typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : undefined;
 }
@@ -108,6 +119,7 @@ export function parsePlayRules(data: unknown): PlayRules | undefined {
   if (!targetApi.minTargetSdk || !targetApi.since || !targetApi.extensionEnded || targetApi.existingAppsHiddenBelow === undefined) {
     return undefined;
   }
+  const next = nextTarget(c["target-api"].next);
 
   if (!isObject(c["16kb"])) return undefined;
   const sixteenKb = { blockFrom: isoDate(c["16kb"].blockFrom) };
@@ -183,7 +195,7 @@ export function parsePlayRules(data: unknown): PlayRules | undefined {
     schemaVersion: PLAY_RULES_SCHEMA_VERSION,
     updatedAt,
     checks: {
-      "target-api": targetApi as PlayRulesChecks["target-api"],
+      "target-api": { ...(targetApi as PlayRulesChecks["target-api"]), ...(next ? { next } : {}) },
       "16kb": { blockFrom: sixteenKb.blockFrom },
       "play-billing": billing as PlayRulesChecks["play-billing"],
       "foreground-services": fgs as PlayRulesChecks["foreground-services"],
@@ -234,6 +246,14 @@ export async function loadPlayRules(opts: {
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const FULL_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/** YYYY-MM to "August 2027". Never adds a day. */
+export function fmtMonth(isoMonth: string): string {
+  const [y, m] = isoMonth.split("-").map(Number);
+  return `${FULL_MONTHS[m - 1]} ${y}`;
+}
 
 export function fmtDate(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);

@@ -28,7 +28,7 @@ It reads your Gradle files, manifests and resources (or an APK / AAB) and prints
 
 Permission rules are always warnings, never failures, because whether an app qualifies is a judgment call.
 
-The API 37 target deadline isn't announced yet, so play-preflight doesn't print a date for it.
+From August 2027, new apps and updates must target API 37. play-preflight prints that as a next-target note, with the month only, because Google hasn't named a day. The date is loaded from https://devbooth.dev/api/play-rules.
 
 ## Sample output
 
@@ -55,7 +55,7 @@ Checked fully offline. Nothing left this machine.
 
 The summary line is at the top. When stdout is not a TTY, or with `--format github`, it is also printed at the bottom so CI log tails still show it.
 
-`--verbose` (or `-v`) adds Rule and devbooth links on every check, side notes like "Next: API 37", and a single `from <file>` line in the header. `--format github` prints `::error` / `::warning` / `::notice` annotations with file and line when known, then the same report, which GitHub Actions will attach to the pull request.
+`--verbose` (or `-v`) adds Rule and devbooth links on every check, side notes like "Next: API 37 for new apps and updates from August 2027", and a single `from <file>` line in the header. `--format github` prints `::error` / `::warning` / `::notice` annotations with file and line when known, then the same report, which GitHub Actions will attach to the pull request.
 
 A failing app lists FAIL, then WARN, then INFO, each with details. Large-screen locks look like `PlayerActivity  app/src/main/AndroidManifest.xml:14  portrait`, pointing at the line of the attribute that triggered the finding (for example `screenOrientation`), with a fix hint and at most five activities unless you pass `--verbose`.
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+- The target API check now prints the next announced target from `https://devbooth.dev/api/play-rules`, currently "Next: API 37 for new apps and updates from August 2027. Google hasn't named a day."
+- The bundled snapshot was refreshed on Nov 23, 2026.
+
 ## 1.1.0
 
 - In online mode, Play requirement dates, target API levels and billing cutoffs are loaded from `https://devbooth.dev/api/play-rules`. The request is a GET, sends nothing about your project, and has a short timeout. `--no-submit` does not affect it.
